@@ -1,5 +1,6 @@
 import * as React from "react";
 import { Bell, Menu } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { cn } from "../../utils";
 
@@ -19,6 +20,7 @@ interface Notification {
 
 const Navbar: React.FC<NavbarProps> = ({ activeTab, onMenuClick }) => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [isNotifOpen, setIsNotifOpen] = React.useState(false);
   const [notifications, setNotifications] = React.useState<Notification[]>([
     {
@@ -156,17 +158,28 @@ const Navbar: React.FC<NavbarProps> = ({ activeTab, onMenuClick }) => {
         </div>
 
         {/* User Badge */}
-        <div className="flex items-center gap-2.5 border-l border-zinc-900 pl-4">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-900 border border-zinc-800 text-xs font-bold text-zinc-100">
-            {user?.name ? user.name[0].toUpperCase() : user?.username[0].toUpperCase()}
-          </div>
+        <button 
+          onClick={() => user && navigate(`/profile/${user.username}`)}
+          className="flex items-center gap-2.5 border-l border-zinc-900 pl-4 cursor-pointer hover:opacity-80 transition-all focus:outline-none text-left"
+        >
+          {user?.image ? (
+            <img 
+              src={user.image} 
+              alt={user.name || user.username} 
+              className="h-8 w-8 rounded-lg object-cover border border-zinc-800 bg-zinc-900 shadow"
+            />
+          ) : (
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-zinc-900 border border-zinc-800 text-xs font-bold text-zinc-100">
+              {user?.name ? user.name[0].toUpperCase() : user?.username[0].toUpperCase()}
+            </div>
+          )}
           <div className="hidden sm:flex flex-col text-left">
             <span className="text-xs font-semibold text-zinc-200 leading-none">
               {user?.name || user?.username}
             </span>
             <span className="text-[10px] text-zinc-500 leading-none mt-1">Active Partner</span>
           </div>
-        </div>
+        </button>
       </div>
     </header>
   );

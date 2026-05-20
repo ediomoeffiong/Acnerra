@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { AppLayout } from "../components/layouts/AppLayout";
 import { Button } from "../components/ui/Button";
@@ -36,6 +37,7 @@ interface Activity {
 
 export default function DashboardPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = React.useState("dashboard");
 
   // State loaded from LocalStorage
@@ -356,15 +358,18 @@ export default function DashboardPage() {
                 <Card className="p-4 space-y-3.5 border-zinc-900 bg-zinc-950/30">
                   {buddies.map((buddy) => (
                     <div key={buddy.id} className="flex items-center justify-between gap-2 border-b border-zinc-900/50 pb-2.5 last:border-0 last:pb-0">
-                      <div className="flex items-center gap-2">
-                        <div className="h-7 w-7 rounded-lg bg-zinc-900 border border-zinc-800 text-xs font-semibold text-zinc-300 flex items-center justify-center">
+                      <button
+                        onClick={() => navigate(`/profile/${buddy.username}`)}
+                        className="flex items-center gap-2 text-left hover:opacity-85 transition-all focus:outline-none group"
+                      >
+                        <div className="h-7 w-7 rounded-lg bg-zinc-900 border border-zinc-800 text-xs font-semibold text-zinc-300 flex items-center justify-center group-hover:border-indigo-500/30 transition-all">
                           {buddy.name[0]}
                         </div>
                         <div className="flex flex-col">
-                          <span className="text-xs font-semibold text-zinc-200">{buddy.name}</span>
+                          <span className="text-xs font-semibold text-zinc-200 group-hover:text-indigo-400 transition-colors">{buddy.name}</span>
                           <span className="text-[10px] text-zinc-500">@{buddy.username}</span>
                         </div>
-                      </div>
+                      </button>
                       <Badge 
                         variant={buddy.status === "active" ? "success" : "warning"}
                         className="text-[9px] px-1.5 py-0 uppercase"

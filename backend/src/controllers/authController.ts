@@ -65,6 +65,8 @@ export const register = async (req: Request, res: Response) => {
         username: user.username,
         email: user.email,
         name: user.name,
+        bio: user.bio,
+        image: user.image,
       },
     });
   } catch (error) {
@@ -123,6 +125,8 @@ export const login = async (req: Request, res: Response) => {
         username: user.username,
         email: user.email,
         name: user.name,
+        bio: user.bio,
+        image: user.image,
       },
     });
   } catch (error) {
@@ -146,7 +150,7 @@ export const me = async (req: any, res: Response) => {
   }
 
   try {
-    const user = await User.findById(req.user.userId).select('id username email name');
+    const user = await User.findById(req.user.userId).select('id username email name bio image');
 
     if (!user) {
       return res.status(404).json({ message: "User not found" });

@@ -1,5 +1,7 @@
 import * as React from "react";
 import { LayoutDashboard, User, LogOut, X, Menu } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../../context/AuthContext";
 import { cn } from "../../utils";
 
 interface SidebarProps {
@@ -17,6 +19,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   onClose,
   onLogout,
 }) => {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+
   const menuItems = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
     { id: "profile", label: "Profile", icon: User },
@@ -64,6 +69,11 @@ const Sidebar: React.FC<SidebarProps> = ({
               <button
                 key={item.id}
                 onClick={() => {
+                  if (item.id === "dashboard") {
+                    navigate("/dashboard");
+                  } else if (item.id === "profile" && user) {
+                    navigate(`/profile/${user.username}`);
+                  }
                   setActiveTab(item.id);
                   onClose();
                 }}
