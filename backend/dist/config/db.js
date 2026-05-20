@@ -6,9 +6,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.connectDB = void 0;
 const mongoose_1 = __importDefault(require("mongoose"));
 const connectDB = async () => {
-    const uri = process.env.DATABASE_URL;
+    const uri = process.env.MONGO_URI || process.env.DATABASE_URL;
     if (!uri) {
-        console.error("DATABASE_URL is not defined in environment variables.");
+        console.error("MONGO_URI or DATABASE_URL is not defined in environment variables.");
         process.exit(1);
     }
     try {

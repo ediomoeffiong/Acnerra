@@ -58,6 +58,8 @@ const register = async (req, res) => {
                 username: user.username,
                 email: user.email,
                 name: user.name,
+                bio: user.bio,
+                image: user.image,
             },
         });
     }
@@ -108,6 +110,8 @@ const login = async (req, res) => {
                 username: user.username,
                 email: user.email,
                 name: user.name,
+                bio: user.bio,
+                image: user.image,
             },
         });
     }
@@ -131,7 +135,7 @@ const me = async (req, res) => {
         return res.status(401).json({ message: "Not authenticated" });
     }
     try {
-        const user = await User_1.User.findById(req.user.userId).select('id username email name');
+        const user = await User_1.User.findById(req.user.userId).select('id username email name bio image');
         if (!user) {
             return res.status(404).json({ message: "User not found" });
         }

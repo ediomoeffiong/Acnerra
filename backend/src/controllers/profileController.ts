@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
 import { User } from '../models/User';
-import { Task } from '../models/Task';
+import { Task, TaskStatus } from '../models/Task';
 
 const ProfileUpdateSchema = z.object({
   username: z.string()
@@ -28,7 +28,7 @@ export const getProfileByUsername = async (req: Request, res: Response) => {
     }
 
     // Fetch real metrics from DB
-    const completedTasksCount = await Task.countDocuments({ creatorId: user._id, status: 'DONE' });
+    const completedTasksCount = await Task.countDocuments({ creatorId: user._id, status: TaskStatus.DONE });
     const totalTasksCount = await Task.countDocuments({ creatorId: user._id });
 
     return res.status(200).json({

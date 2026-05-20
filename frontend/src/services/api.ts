@@ -1,8 +1,23 @@
 import axios from 'axios';
 
+// Determine the API base URL with a dynamic fallback for production (Vercel)
+const getBaseURL = () => {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  
+  // If the app is loaded from the Vercel production domain, dynamically use the deployed Render API
+  if (typeof window !== 'undefined' && window.location.hostname.includes('acnerra.vercel.app')) {
+    return 'https://acnerra-backend-api.onrender.com/api/v1';
+  }
+  
+  // Local development default fallback
+  return 'http://localhost:5000/api/v1';
+};
+
 // Create an Axios instance configured for the backend API
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5000/api/v1',
+  baseURL: getBaseURL(),
   withCredentials: true, // Crucial for sending/receiving cookies (like JWT sessions)
   headers: {
     'Content-Type': 'application/json',

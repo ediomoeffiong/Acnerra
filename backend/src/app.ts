@@ -8,9 +8,27 @@ import profileRoutes from './routes/profileRoutes';
 
 const app = express();
 
+// Allowed CORS origins
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://acnerra.vercel.app'
+];
+
 // Middleware
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps, curl, postman)
+    if (!origin) return callback(null, true);
+    
+    // Check if origin is in allowedOrigins or matches FRONTEND_URL environment variable
+    const isAllowed = allowedOrigins.includes(origin) || (process.env.FRONTEND_URL && process.env.FRONTEND_URL === origin);
+    
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      callback(null, false); // Fail CORS validation gracefully
+    }
+  },
   credentials: true,
 }));
 app.use(express.json());
