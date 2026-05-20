@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { AlertCircle, User, FileText, Image as ImageIcon, Check } from "lucide-react";
+import { AlertCircle, User, FileText, Check } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import api from "../../services/api";
 import { Modal } from "../ui/Modal";
