@@ -25,7 +25,7 @@ const getProfileByUsername = async (req, res) => {
             });
         }
         // Fetch real metrics from DB
-        const completedTasksCount = await Task_1.Task.countDocuments({ creatorId: user._id, status: Task_1.TaskStatus.DONE });
+        const completedTasksCount = await Task_1.Task.countDocuments({ creatorId: user._id, status: Task_1.TaskStatus.COMPLETED });
         const totalTasksCount = await Task_1.Task.countDocuments({ creatorId: user._id });
         return res.status(200).json({
             user: {

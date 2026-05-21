@@ -7,20 +7,13 @@ import { Card } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { Badge } from "../components/ui/Badge";
 import { Modal } from "../components/ui/Modal";
+import { Skeleton } from "../components/ui/Skeleton";
 import { 
   Plus, CheckCircle2, Circle, Clock, Trash2, UserPlus, 
-  ArrowUpCircle, Flame, Calendar, Award 
+  ArrowUpCircle, Flame, Calendar, Award, ExternalLink
 } from "lucide-react";
-
-interface Task {
-  id: string;
-  title: string;
-  description: string;
-  status: "todo" | "in_progress" | "done";
-  priority: "high" | "medium" | "low";
-  dueDate: string;
-  checkInCount: number;
-}
+import { taskService } from "../services/taskService";
+import type { Task } from "../services/taskService";
 
 interface Buddy {
   id: string;
@@ -40,39 +33,9 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = React.useState("dashboard");
 
-  // State loaded from LocalStorage
-  const [tasks, setTasks] = React.useState<Task[]>(() => {
-    const saved = localStorage.getItem("acnerra_tasks");
-    return saved ? JSON.parse(saved) : [
-      {
-        id: "1",
-        title: "Design Acnerra Figma Workspace",
-        description: "Draft structural layouts, card spacing system, and visual palettes.",
-        status: "in_progress",
-        priority: "high",
-        dueDate: "2026-05-20",
-        checkInCount: 3,
-      },
-      {
-        id: "2",
-        title: "Setup Express Validation Schemas",
-        description: "Integrate Zod validator middleware into backend router entries.",
-        status: "todo",
-        priority: "medium",
-        dueDate: "2026-05-24",
-        checkInCount: 0,
-      },
-      {
-        id: "3",
-        title: "Finalize Dark Mode Scrollbars",
-        description: "Make layout elements fit neatly on standard and mobile sizes.",
-        status: "done",
-        priority: "low",
-        dueDate: "2026-05-18",
-        checkInCount: 1,
-      }
-    ];
-  });
+  // State loaded from API
+  const [tasks, setTasks] = React.useState<Task[]>([]);
+  const [loadingTasks, setLoadingTasks] = React.useState(true);
 
   const [buddies, setBuddies] = React.useState<Buddy[]>(() => {
     const saved = localStorage.getItem("acnerra_buddies");
@@ -113,11 +76,23 @@ export default function DashboardPage() {
 
   const [editBioText, setEditBioText] = React.useState(profileBio);
 
-  // Persistence
+  // Load Tasks on Mount
   React.useEffect(() => {
-    localStorage.setItem("acnerra_tasks", JSON.stringify(tasks));
-  }, [tasks]);
+    const loadTasks = async () => {
+      try {
+        setLoadingTasks(true);
+        const data = await taskService.getTasks();
+        setTasks(data);
+      } catch (error) {
+        console.error("Failed to load tasks from API:", error);
+      } finally {
+        setLoadingTasks(false);
+      }
+    };
+    loadTasks();
+  }, []);
 
+  // Persistence
   React.useEffect(() => {
     localStorage.setItem("acnerra_buddies", JSON.stringify(buddies));
   }, [buddies]);
@@ -127,54 +102,62 @@ export default function DashboardPage() {
   }, [activities]);
 
   // Actions
-  const handleCreateTask = (e: React.FormEvent) => {
+  const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTaskTitle.trim()) return;
 
-    const newTask: Task = {
-      id: Date.now().toString(),
-      title: newTaskTitle,
-      description: newTaskDesc,
-      status: "todo",
-      priority: newTaskPriority,
-      dueDate: newTaskDueDate || new Date().toISOString().split('T')[0],
-      checkInCount: 0
-    };
+    try {
+      const created = await taskService.createTask({
+        title: newTaskTitle,
+        description: newTaskDesc,
+        priority: newTaskPriority.toUpperCase() as any,
+        dueDate: newTaskDueDate || null
+      });
 
-    setTasks([newTask, ...tasks]);
-    setActivities([{ id: Date.now().toString(), text: `You created task '${newTaskTitle}'`, time: "Just now" }, ...activities]);
-    
-    // Reset Form & Close
-    setNewTaskTitle("");
-    setNewTaskDesc("");
-    setNewTaskPriority("medium");
-    setNewTaskDueDate("");
-    setIsTaskModalOpen(false);
+      setTasks([created, ...tasks]);
+      setActivities([{ id: Date.now().toString(), text: `You created task '${newTaskTitle}'`, time: "Just now" }, ...activities]);
+      
+      // Reset Form & Close
+      setNewTaskTitle("");
+      setNewTaskDesc("");
+      setNewTaskPriority("medium");
+      setNewTaskDueDate("");
+      setIsTaskModalOpen(false);
+    } catch (error) {
+      console.error("Failed to create task:", error);
+    }
   };
 
-  const handleToggleTaskStatus = (id: string) => {
-    setTasks(tasks.map(t => {
-      if (t.id === id) {
-        let nextStatus: "todo" | "in_progress" | "done" = "todo";
-        if (t.status === "todo") nextStatus = "in_progress";
-        else if (t.status === "in_progress") nextStatus = "done";
-        
-        // Log activity
-        setActivities([{
-          id: Date.now().toString(),
-          text: `You moved '${t.title}' to ${nextStatus.replace('_', ' ')}`,
-          time: "Just now"
-        }, ...activities]);
+  const handleToggleTaskStatus = async (id: string) => {
+    const taskToToggle = tasks.find(t => t.id === id);
+    if (!taskToToggle) return;
 
-        return { ...t, status: nextStatus };
-      }
-      return t;
-    }));
+    let nextStatus: Task["status"] = "PENDING";
+    if (taskToToggle.status === "PENDING") nextStatus = "IN_PROGRESS";
+    else if (taskToToggle.status === "IN_PROGRESS") nextStatus = "COMPLETED";
+
+    try {
+      const updated = await taskService.updateTask(id, { status: nextStatus });
+      setTasks(tasks.map(t => t.id === id ? updated : t));
+
+      setActivities([{
+        id: Date.now().toString(),
+        text: `You moved '${taskToToggle.title}' to ${nextStatus.replace('_', ' ').toLowerCase()}`,
+        time: "Just now"
+      }, ...activities]);
+    } catch (error) {
+      console.error("Failed to toggle task status:", error);
+    }
   };
 
-  const handleDeleteTask = (id: string, title: string) => {
-    setTasks(tasks.filter(t => t.id !== id));
-    setActivities([{ id: Date.now().toString(), text: `You deleted task '${title}'`, time: "Just now" }, ...activities]);
+  const handleDeleteTask = async (id: string, title: string) => {
+    try {
+      await taskService.deleteTask(id);
+      setTasks(tasks.filter(t => t.id !== id));
+      setActivities([{ id: Date.now().toString(), text: `You deleted task '${title}'`, time: "Just now" }, ...activities]);
+    } catch (error) {
+      console.error("Failed to delete task:", error);
+    }
   };
 
   const handleAddBuddy = (e: React.FormEvent) => {
@@ -205,8 +188,8 @@ export default function DashboardPage() {
 
   // Metrics
   const totalTasks = tasks.length;
-  const completedTasks = tasks.filter(t => t.status === "done").length;
-  const inProgressTasks = tasks.filter(t => t.status === "in_progress").length;
+  const completedTasks = tasks.filter(t => t.status === "COMPLETED").length;
+  const inProgressTasks = tasks.filter(t => t.status === "IN_PROGRESS").length;
   const activeBuddies = buddies.filter(b => b.status === "active").length;
 
   return (
@@ -277,11 +260,30 @@ export default function DashboardPage() {
               <div className="flex items-center justify-between">
                 <h2 className="text-base font-bold text-zinc-200 tracking-tight">Active Work board</h2>
                 <Badge variant="secondary" className="px-2 py-0.5 text-[10px] font-semibold">
-                  {tasks.filter(t => t.status !== "done").length} Remaining
+                  {tasks.filter(t => t.status !== "COMPLETED").length} Remaining
                 </Badge>
               </div>
 
-              {tasks.length === 0 ? (
+              {loadingTasks ? (
+                /* Premium Skeleton Loaders */
+                <div className="space-y-3">
+                  {[1, 2, 3].map((i) => (
+                    <Card key={i} className="p-4 flex flex-col gap-3.5 border-zinc-900/60 bg-zinc-950/20">
+                      <div className="flex items-start gap-3.5">
+                        <Skeleton className="h-5 w-5 rounded-full mt-1" />
+                        <div className="space-y-2 flex-1">
+                          <div className="flex items-center gap-2">
+                            <Skeleton className="h-4 w-1/3" />
+                            <Skeleton className="h-3.5 w-12 rounded-full" />
+                          </div>
+                          <Skeleton className="h-3 w-3/4" />
+                          <Skeleton className="h-3 w-1/4 mt-2" />
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              ) : tasks.length === 0 ? (
                 <div className="flex flex-col items-center justify-center p-12 text-center rounded-xl border border-zinc-900 bg-zinc-950/20">
                   <Clock className="h-10 w-10 text-zinc-700 mb-3" />
                   <p className="text-sm font-semibold text-zinc-400">No tasks currently tracked.</p>
@@ -293,46 +295,58 @@ export default function DashboardPage() {
               ) : (
                 <div className="space-y-3">
                   {tasks.map((task) => (
-                    <Card key={task.id} className="p-4 flex flex-col sm:flex-row justify-between sm:items-center gap-4 hover:border-zinc-800 transition-all duration-300">
+                    <Card key={task.id} className="p-4 flex flex-col sm:flex-row justify-between sm:items-center gap-4 hover:border-zinc-800 transition-all duration-300 relative group overflow-hidden">
+                      <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/[0.01] group-hover:bg-indigo-500/[0.02] blur-xl rounded-full transition-colors pointer-events-none" />
+                      
                       <div className="flex items-start gap-3.5">
                         <button
                           onClick={() => handleToggleTaskStatus(task.id)}
                           className="mt-1 flex-shrink-0 text-zinc-500 hover:text-indigo-400 transition-colors focus:outline-none"
                         >
-                          {task.status === "done" ? (
+                          {task.status === "COMPLETED" ? (
                             <CheckCircle2 className="h-5 w-5 text-indigo-500" />
-                          ) : task.status === "in_progress" ? (
+                          ) : task.status === "IN_PROGRESS" ? (
                             <Clock className="h-5 w-5 text-purple-400" />
                           ) : (
                             <Circle className="h-5 w-5 text-zinc-700" />
                           )}
                         </button>
+                        
                         <div>
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className={`text-sm font-semibold tracking-tight ${task.status === "done" ? "line-through text-zinc-500" : "text-zinc-100"}`}>
+                            <button
+                              onClick={() => navigate(`/tasks/${task.id}`)}
+                              className={`text-sm font-semibold tracking-tight text-left hover:text-indigo-400 hover:underline transition-colors focus:outline-none ${task.status === "COMPLETED" ? "line-through text-zinc-500 hover:text-zinc-500" : "text-zinc-100"}`}
+                            >
                               {task.title}
-                            </span>
+                            </button>
+                            
                             <Badge 
                               variant={
-                                task.priority === "high" 
+                                task.priority === "HIGH" 
                                   ? "destructive" 
-                                  : task.priority === "medium" 
+                                  : task.priority === "MEDIUM" 
                                   ? "warning" 
                                   : "secondary"
                               }
                               className="text-[9px] uppercase tracking-wider px-1.5 py-0"
                             >
-                              {task.priority}
+                              {task.priority.toLowerCase()}
                             </Badge>
                           </div>
+                          
                           <p className="text-xs text-zinc-400/90 mt-1 max-w-lg leading-relaxed">{task.description}</p>
+                          
                           <div className="flex items-center gap-4 mt-2.5 text-[10px] text-zinc-500">
                             <span className="flex items-center gap-1">
-                              <Calendar className="h-3.5 w-3.5" /> Due {task.dueDate}
+                              <Calendar className="h-3.5 w-3.5" /> Due {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : "No target date"}
                             </span>
-                            <span className="flex items-center gap-1">
-                              <Award className="h-3.5 w-3.5 text-indigo-400/80" /> {task.checkInCount} check-ins
-                            </span>
+                            <button
+                              onClick={() => navigate(`/tasks/${task.id}`)}
+                              className="flex items-center gap-1 text-[10px] text-indigo-400/80 hover:text-indigo-400 underline font-semibold transition-colors focus:outline-none"
+                            >
+                              <ExternalLink className="h-3 w-3" /> View Target details
+                            </button>
                           </div>
                         </div>
                       </div>

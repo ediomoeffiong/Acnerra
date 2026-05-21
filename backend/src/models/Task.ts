@@ -1,16 +1,22 @@
 import { Schema, model } from 'mongoose';
 
 export enum TaskStatus {
-  TODO = 'TODO',
+  PENDING = 'PENDING',
   IN_PROGRESS = 'IN_PROGRESS',
-  DONE = 'DONE',
-  ARCHIVED = 'ARCHIVED'
+  COMPLETED = 'COMPLETED'
+}
+
+export enum TaskPriority {
+  LOW = 'LOW',
+  MEDIUM = 'MEDIUM',
+  HIGH = 'HIGH'
 }
 
 const TaskSchema = new Schema({
   title: { type: String, required: true, trim: true },
   description: { type: String, trim: true, default: '' },
-  status: { type: String, enum: Object.values(TaskStatus), default: TaskStatus.TODO },
+  status: { type: String, enum: Object.values(TaskStatus), default: TaskStatus.PENDING },
+  priority: { type: String, enum: Object.values(TaskPriority), default: TaskPriority.MEDIUM },
   dueDate: { type: Date, default: null },
   creatorId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   partnerId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
