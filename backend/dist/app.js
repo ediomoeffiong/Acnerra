@@ -7,6 +7,7 @@ require("dotenv/config");
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const cookie_parser_1 = __importDefault(require("cookie-parser"));
+const mongoose_1 = __importDefault(require("mongoose"));
 const authRoutes_1 = __importDefault(require("./routes/authRoutes"));
 const profileRoutes_1 = __importDefault(require("./routes/profileRoutes"));
 const app = (0, express_1.default)();
@@ -55,6 +56,15 @@ app.get('/health', (req, res) => {
     res.status(200).json({ status: 'OK' });
 });
 const errorMiddleware_1 = require("./middleware/errorMiddleware");
+// DB connection check middleware for API endpoints
+app.use('/api/v1', (req, res, next) => {
+    if (mongoose_1.default.connection.readyState !== 1) {
+        return res.status(503).json({
+            message: "Database connection is not active. Please ensure MONGO_URI or DATABASE_URL is correctly configured in your Render dashboard environment variables."
+        });
+    }
+    next();
+});
 // Auth Routes
 app.use('/api/v1/auth', authRoutes_1.default);
 // Profile Routes

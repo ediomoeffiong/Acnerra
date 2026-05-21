@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import mongoose from 'mongoose';
 
 import authRoutes from './routes/authRoutes';
 import profileRoutes from './routes/profileRoutes';
@@ -56,6 +57,16 @@ app.get('/health', (req, res) => {
 });
 
 import { errorHandler } from './middleware/errorMiddleware';
+
+// DB connection check middleware for API endpoints
+app.use('/api/v1', (req, res, next) => {
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({
+      message: "Database connection is not active. Please ensure MONGO_URI or DATABASE_URL is correctly configured in your Render dashboard environment variables."
+    });
+  }
+  next();
+});
 
 // Auth Routes
 app.use('/api/v1/auth', authRoutes);

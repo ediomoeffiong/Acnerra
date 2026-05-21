@@ -44,11 +44,12 @@ const register = async (req, res) => {
         }).save();
         const expires = new Date(Date.now() + auth_1.SESSION_DURATION);
         const session = await (0, auth_1.encrypt)({ userId: user._id.toString(), expires });
+        const isProduction = process.env.NODE_ENV === 'production';
         res.cookie('session', session, {
             expires,
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'lax',
+            secure: isProduction,
+            sameSite: isProduction ? 'none' : 'lax',
             path: '/',
         });
         return res.status(201).json({
@@ -96,11 +97,12 @@ const login = async (req, res) => {
         }
         const expires = new Date(Date.now() + auth_1.SESSION_DURATION);
         const session = await (0, auth_1.encrypt)({ userId: user._id.toString(), expires });
+        const isProduction = process.env.NODE_ENV === 'production';
         res.cookie('session', session, {
             expires,
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'lax',
+            secure: isProduction,
+            sameSite: isProduction ? 'none' : 'lax',
             path: '/',
         });
         return res.status(200).json({
@@ -124,8 +126,11 @@ const login = async (req, res) => {
 };
 exports.login = login;
 const logout = async (req, res) => {
+    const isProduction = process.env.NODE_ENV === 'production';
     res.clearCookie('session', {
         path: '/',
+        secure: isProduction,
+        sameSite: isProduction ? 'none' : 'lax',
     });
     return res.status(200).json({ message: "Logged out successfully" });
 };

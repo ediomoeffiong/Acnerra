@@ -50,11 +50,12 @@ export const register = async (req: Request, res: Response) => {
     const expires = new Date(Date.now() + SESSION_DURATION);
     const session = await encrypt({ userId: user._id.toString(), expires });
 
+    const isProduction = process.env.NODE_ENV === 'production';
     res.cookie('session', session, {
       expires,
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      secure: isProduction,
+      sameSite: isProduction ? 'none' : 'lax',
       path: '/',
     });
 
@@ -110,11 +111,12 @@ export const login = async (req: Request, res: Response) => {
     const expires = new Date(Date.now() + SESSION_DURATION);
     const session = await encrypt({ userId: user._id.toString(), expires });
 
+    const isProduction = process.env.NODE_ENV === 'production';
     res.cookie('session', session, {
       expires,
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      secure: isProduction,
+      sameSite: isProduction ? 'none' : 'lax',
       path: '/',
     });
 
@@ -138,8 +140,11 @@ export const login = async (req: Request, res: Response) => {
 };
 
 export const logout = async (req: Request, res: Response) => {
+  const isProduction = process.env.NODE_ENV === 'production';
   res.clearCookie('session', {
     path: '/',
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
   });
   return res.status(200).json({ message: "Logged out successfully" });
 };
