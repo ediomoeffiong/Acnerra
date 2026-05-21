@@ -6,9 +6,9 @@ const getBaseURL = () => {
     return import.meta.env.VITE_API_URL;
   }
   
-  // If the app is loaded from the Vercel production domain, dynamically use the deployed Render API
-  if (typeof window !== 'undefined' && window.location.hostname.includes('acnerra.vercel.app')) {
-    return 'https://acnerra-backend-api.onrender.com/api/v1';
+  // If the app is loaded from any Vercel domain (production or preview), dynamically use the deployed Render API
+  if (typeof window !== 'undefined' && (window.location.hostname.includes('vercel.app') || window.location.hostname.includes('acnerra'))) {
+    return 'https://acnerra.onrender.com/api/v1';
   }
   
   // Local development default fallback

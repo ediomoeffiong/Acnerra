@@ -13,17 +13,29 @@ const app = (0, express_1.default)();
 // Allowed CORS origins
 const allowedOrigins = [
     'http://localhost:5173',
+    'http://localhost:3000',
     'https://acnerra.vercel.app'
 ];
+// Helper to validate origin
+const isOriginAllowed = (origin) => {
+    if (!origin)
+        return true; // Allow requests with no origin (like mobile apps, curl, postman)
+    if (allowedOrigins.includes(origin))
+        return true;
+    if (process.env.FRONTEND_URL && process.env.FRONTEND_URL === origin)
+        return true;
+    // Allow any localhost port in development
+    if (/^http:\/\/localhost:\d+$/.test(origin))
+        return true;
+    // Allow Vercel preview deployment URLs dynamically
+    if (/^https:\/\/acnerra-.*\.vercel\.app$/.test(origin))
+        return true;
+    return false;
+};
 // Middleware
 app.use((0, cors_1.default)({
     origin: (origin, callback) => {
-        // Allow requests with no origin (like mobile apps, curl, postman)
-        if (!origin)
-            return callback(null, true);
-        // Check if origin is in allowedOrigins or matches FRONTEND_URL environment variable
-        const isAllowed = allowedOrigins.includes(origin) || (process.env.FRONTEND_URL && process.env.FRONTEND_URL === origin);
-        if (isAllowed) {
+        if (isOriginAllowed(origin)) {
             callback(null, true);
         }
         else {
@@ -31,6 +43,9 @@ app.use((0, cors_1.default)({
         }
     },
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
+    exposedHeaders: ['Set-Cookie']
 }));
 app.use(express_1.default.json());
 app.use(express_1.default.urlencoded({ extended: true }));

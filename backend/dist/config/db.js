@@ -8,8 +8,8 @@ const mongoose_1 = __importDefault(require("mongoose"));
 const connectDB = async () => {
     const uri = process.env.MONGO_URI || process.env.DATABASE_URL;
     if (!uri) {
-        console.error("MONGO_URI or DATABASE_URL is not defined in environment variables.");
-        process.exit(1);
+        console.error("WARNING: MONGO_URI or DATABASE_URL is not defined in environment variables. Database features will fail.");
+        return;
     }
     try {
         const conn = await mongoose_1.default.connect(uri);
@@ -17,7 +17,7 @@ const connectDB = async () => {
     }
     catch (error) {
         console.error("MongoDB connection error:", error);
-        process.exit(1);
+        console.error("The server will continue running, but database operations will fail until connection is established.");
     }
 };
 exports.connectDB = connectDB;
