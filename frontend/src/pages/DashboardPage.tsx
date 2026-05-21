@@ -39,25 +39,17 @@ export default function DashboardPage() {
 
   const [buddies, setBuddies] = React.useState<Buddy[]>(() => {
     const saved = localStorage.getItem("acnerra_buddies");
-    return saved ? JSON.parse(saved) : [
-      { id: "1", name: "Alex Mercer", username: "alexm", status: "active" },
-      { id: "2", name: "Sarah Connor", username: "sarahc", status: "active" },
-      { id: "3", name: "John Doe", username: "johnd", status: "pending" }
-    ];
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [activities, setActivities] = React.useState<Activity[]>(() => {
     const saved = localStorage.getItem("acnerra_activities");
-    return saved ? JSON.parse(saved) : [
-      { id: "1", text: "You created task 'Design Acnerra Figma Workspace'", time: "2 hours ago" },
-      { id: "2", text: "Alex Mercer approved your check-in for 'Dark Mode Scrollbars'", time: "5 hours ago" },
-      { id: "3", text: "You sent a buddy request to John Doe", time: "1 day ago" }
-    ];
+    return saved ? JSON.parse(saved) : [];
   });
 
   // Profile Edit States
   const [profileBio, setProfileBio] = React.useState(() => {
-    return localStorage.getItem("acnerra_bio") || "Passionate software creator focused on consistent daily targets and collaborative accountability.";
+    return localStorage.getItem("acnerra_bio") || "";
   });
 
   // Modals Toggles
