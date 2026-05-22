@@ -20,6 +20,7 @@ const TaskSchema = new Schema({
   dueDate: { type: Date, default: null },
   creatorId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   partnerId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+  collaboratorIds: [{ type: Schema.Types.ObjectId, ref: 'User' }],
 }, { timestamps: true });
 
 // Convert _id to id for frontend compatibility
@@ -40,5 +41,6 @@ TaskSchema.set('toJSON', {
 // Indexes for high performance
 TaskSchema.index({ creatorId: 1 });
 TaskSchema.index({ partnerId: 1 });
+TaskSchema.index({ collaboratorIds: 1 });
 
 export const Task = model('Task', TaskSchema);

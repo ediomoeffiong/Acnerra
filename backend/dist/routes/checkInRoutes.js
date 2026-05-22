@@ -1,0 +1,11 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const authMiddleware_1 = require("../middleware/authMiddleware");
+const validateObjectId_1 = require("../middleware/validateObjectId");
+const checkInController_1 = require("../controllers/checkInController");
+const router = (0, express_1.Router)({ mergeParams: true });
+router.use(authMiddleware_1.authMiddleware);
+router.get('/', (0, validateObjectId_1.validateObjectId)('taskId'), checkInController_1.listCheckIns);
+router.post('/', (0, validateObjectId_1.validateObjectId)('taskId'), checkInController_1.createCheckIn);
+exports.default = router;

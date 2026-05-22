@@ -7,6 +7,10 @@ import mongoose from 'mongoose';
 import authRoutes from './routes/authRoutes';
 import profileRoutes from './routes/profileRoutes';
 import taskRoutes from './routes/taskRoutes';
+import inviteRoutes from './routes/inviteRoutes';
+import checkInRoutes from './routes/checkInRoutes';
+import notificationRoutes from './routes/notificationRoutes';
+import analyticsRoutes from './routes/analyticsRoutes';
 
 const app = express();
 
@@ -77,6 +81,10 @@ app.use('/api/v1/profiles', profileRoutes);
 
 // Task Routes
 app.use('/api/v1/tasks', taskRoutes);
+app.use('/api/v1/tasks/:taskId/check-ins', checkInRoutes);
+app.use('/api/v1/invites', inviteRoutes);
+app.use('/api/v1/notifications', notificationRoutes);
+app.use('/api/v1/analytics', analyticsRoutes);
 
 // Error handling middleware
 app.use(errorHandler);

@@ -22,6 +22,7 @@ const TaskSchema = new mongoose_1.Schema({
     dueDate: { type: Date, default: null },
     creatorId: { type: mongoose_1.Schema.Types.ObjectId, ref: 'User', required: true },
     partnerId: { type: mongoose_1.Schema.Types.ObjectId, ref: 'User', default: null },
+    collaboratorIds: [{ type: mongoose_1.Schema.Types.ObjectId, ref: 'User' }],
 }, { timestamps: true });
 // Convert _id to id for frontend compatibility
 TaskSchema.virtual('id').get(function () {
@@ -39,4 +40,5 @@ TaskSchema.set('toJSON', {
 // Indexes for high performance
 TaskSchema.index({ creatorId: 1 });
 TaskSchema.index({ partnerId: 1 });
+TaskSchema.index({ collaboratorIds: 1 });
 exports.Task = (0, mongoose_1.model)('Task', TaskSchema);

@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.updateProfile = exports.getProfileByUsername = void 0;
+exports.searchProfiles = exports.updateProfile = exports.getProfileByUsername = void 0;
 const zod_1 = require("zod");
 const User_1 = require("../models/User");
 const Task_1 = require("../models/Task");
@@ -108,3 +108,42 @@ const updateProfile = async (req, res) => {
     }
 };
 exports.updateProfile = updateProfile;
+// Search active profiles by username or email
+const searchProfiles = async (req, res) => {
+    if (!req.user) {
+        return res.status(401).json({ message: "Not authenticated" });
+    }
+    const query = req.query.query;
+    if (!query || typeof query !== 'string' || query.trim().length === 0) {
+        return res.status(200).json({ profiles: [] });
+    }
+    try {
+        const searchRegex = new RegExp(query.trim(), 'i');
+        // Find matching users (exclude current user)
+        const users = await User_1.User.find({
+            _id: { $ne: req.user.userId },
+            $or: [
+                { username: { $regex: searchRegex } },
+                { email: { $regex: searchRegex } }
+            ]
+        })
+            .select('id username name bio image')
+            .limit(10);
+        return res.status(200).json({
+            profiles: users.map(u => ({
+                id: u._id.toString(),
+                username: u.username,
+                name: u.name || '',
+                image: u.image || '',
+                bio: u.bio || ''
+            }))
+        });
+    }
+    catch (error) {
+        console.error("Search profiles error:", error);
+        return res.status(500).json({
+            message: "An error occurred while searching profiles.",
+        });
+    }
+};
+exports.searchProfiles = searchProfiles;

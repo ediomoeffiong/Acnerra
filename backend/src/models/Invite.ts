@@ -3,15 +3,17 @@ import { Schema, model } from 'mongoose';
 export enum InviteStatus {
   PENDING = 'PENDING',
   ACCEPTED = 'ACCEPTED',
-  REJECTED = 'REJECTED'
+  DECLINED = 'DECLINED',
+  EXPIRED = 'EXPIRED'
 }
 
 const InviteSchema = new Schema({
   senderId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-  receiverId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
-  email: { type: String, required: true, lowercase: true, trim: true },
+  receiverId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   status: { type: String, enum: Object.values(InviteStatus), default: InviteStatus.PENDING },
   taskId: { type: Schema.Types.ObjectId, ref: 'Task', required: true },
+  expiresAt: { type: Date, default: () => new Date(Date.now() + 1000 * 60 * 60 * 24 * 7) },
+  respondedAt: { type: Date, default: null },
 }, { timestamps: true });
 
 InviteSchema.virtual('id').get(function() {
@@ -31,7 +33,10 @@ InviteSchema.set('toJSON', {
 // Indexes
 InviteSchema.index({ senderId: 1 });
 InviteSchema.index({ receiverId: 1 });
-InviteSchema.index({ email: 1 });
 InviteSchema.index({ taskId: 1 });
+InviteSchema.index(
+  { senderId: 1, receiverId: 1, taskId: 1, status: 1 },
+  { unique: true, partialFilterExpression: { status: InviteStatus.PENDING } }
+);
 
 export const Invite = model('Invite', InviteSchema);

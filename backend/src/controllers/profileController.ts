@@ -118,3 +118,47 @@ export const updateProfile = async (req: any, res: Response) => {
     });
   }
 };
+
+// Search active profiles by username or email
+export const searchProfiles = async (req: any, res: Response) => {
+  if (!req.user) {
+    return res.status(401).json({ message: "Not authenticated" });
+  }
+
+  const query = req.query.query;
+
+  if (!query || typeof query !== 'string' || query.trim().length === 0) {
+    return res.status(200).json({ profiles: [] });
+  }
+
+  try {
+    const searchRegex = new RegExp(query.trim(), 'i');
+    
+    // Find matching users (exclude current user)
+    const users = await User.find({
+      _id: { $ne: req.user.userId },
+      $or: [
+        { username: { $regex: searchRegex } },
+        { email: { $regex: searchRegex } }
+      ]
+    })
+    .select('id username name bio image')
+    .limit(10);
+
+    return res.status(200).json({
+      profiles: users.map(u => ({
+        id: u._id.toString(),
+        username: u.username,
+        name: u.name || '',
+        image: u.image || '',
+        bio: u.bio || ''
+      }))
+    });
+
+  } catch (error) {
+    console.error("Search profiles error:", error);
+    return res.status(500).json({
+      message: "An error occurred while searching profiles.",
+    });
+  }
+};

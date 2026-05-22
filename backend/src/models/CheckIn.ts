@@ -1,8 +1,14 @@
 import { Schema, model } from 'mongoose';
 
+export enum CheckInStatus {
+  COMPLETED = 'COMPLETED',
+  IN_PROGRESS = 'IN_PROGRESS',
+  MISSED = 'MISSED'
+}
+
 const CheckInSchema = new Schema({
-  content: { type: String, trim: true, default: '' },
-  status: { type: String, default: null }, // e.g. feeling good, struggling, etc.
+  notes: { type: String, trim: true, default: '' },
+  status: { type: String, enum: Object.values(CheckInStatus), required: true },
   taskId: { type: Schema.Types.ObjectId, ref: 'Task', required: true },
   userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
 }, { timestamps: true });
@@ -23,5 +29,6 @@ CheckInSchema.set('toJSON', {
 
 CheckInSchema.index({ taskId: 1 });
 CheckInSchema.index({ userId: 1 });
+CheckInSchema.index({ taskId: 1, createdAt: -1 });
 
 export const CheckIn = model('CheckIn', CheckInSchema);

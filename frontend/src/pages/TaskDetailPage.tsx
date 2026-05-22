@@ -9,9 +9,11 @@ import { Modal } from "../components/ui/Modal";
 import { Skeleton } from "../components/ui/Skeleton";
 import { taskService } from "../services/taskService";
 import type { Task, TaskStatus, TaskPriority } from "../services/taskService";
+import { checkInService } from "../services/checkInService";
+import type { CheckIn, CheckInStatus } from "../services/checkInService";
 import { 
   ArrowLeft, Calendar, Trash2, Edit2, CheckCircle2, 
-  Clock, Circle, ShieldAlert, AlertCircle, Sparkles
+  Clock, Circle, ShieldAlert, AlertCircle, Sparkles, MessageSquarePlus
 } from "lucide-react";
 
 export default function TaskDetailPage() {
@@ -19,12 +21,14 @@ export default function TaskDetailPage() {
   const navigate = useNavigate();
   
   const [task, setTask] = React.useState<Task | null>(null);
+  const [checkIns, setCheckIns] = React.useState<CheckIn[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   
   // Modal states
   const [isEditModalOpen, setIsEditModalOpen] = React.useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = React.useState(false);
+  const [isCheckInModalOpen, setIsCheckInModalOpen] = React.useState(false);
   
   // Edit form states
   const [editTitle, setEditTitle] = React.useState("");
@@ -32,14 +36,20 @@ export default function TaskDetailPage() {
   const [editPriority, setEditPriority] = React.useState<TaskPriority>("MEDIUM");
   const [editStatus, setEditStatus] = React.useState<TaskStatus>("PENDING");
   const [editDueDate, setEditDueDate] = React.useState("");
+  const [checkInStatus, setCheckInStatus] = React.useState<CheckInStatus>("IN_PROGRESS");
+  const [checkInNotes, setCheckInNotes] = React.useState("");
 
   const fetchTask = React.useCallback(async () => {
     if (!id) return;
     try {
       setLoading(true);
       setError(null);
-      const fetchedTask = await taskService.getTask(id);
+      const [fetchedTask, fetchedCheckIns] = await Promise.all([
+        taskService.getTask(id),
+        checkInService.listCheckIns(id),
+      ]);
       setTask(fetchedTask);
+      setCheckIns(fetchedCheckIns);
       
       // Initialize edit states
       setEditTitle(fetchedTask.title);
@@ -113,6 +123,24 @@ export default function TaskDetailPage() {
     }
   };
 
+  const handleSubmitCheckIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!id) return;
+
+    try {
+      const created = await checkInService.createCheckIn(id, {
+        status: checkInStatus,
+        notes: checkInNotes,
+      });
+      setCheckIns([created, ...checkIns]);
+      setCheckInNotes("");
+      setCheckInStatus("IN_PROGRESS");
+      setIsCheckInModalOpen(false);
+    } catch (err) {
+      console.error("Error submitting check-in:", err);
+    }
+  };
+
   // Helper to get priority badge details
   const getPriorityBadge = (priority: TaskPriority) => {
     switch (priority) {
@@ -173,6 +201,14 @@ export default function TaskDetailPage() {
                 className="h-8 font-semibold text-xs border-zinc-800 hover:bg-zinc-900"
               >
                 <Edit2 className="mr-1 h-3.5 w-3.5" /> Edit details
+              </Button>
+              <Button
+                onClick={() => setIsCheckInModalOpen(true)}
+                variant="outline"
+                size="sm"
+                className="h-8 font-semibold text-xs border-indigo-950 text-indigo-300 hover:bg-indigo-950/20"
+              >
+                <MessageSquarePlus className="mr-1 h-3.5 w-3.5" /> Check in
               </Button>
               <Button 
                 onClick={() => setIsDeleteModalOpen(true)} 
@@ -278,6 +314,36 @@ export default function TaskDetailPage() {
                   </div>
                 </div>
               </div>
+            </Card>
+
+            <Card className="p-5 border-zinc-900 bg-zinc-950/20 space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wide text-zinc-200">Check-in History</h3>
+                  <p className="text-[11px] text-zinc-500 mt-1">Chronological accountability updates for this task.</p>
+                </div>
+                <Button onClick={() => setIsCheckInModalOpen(true)} size="sm" className="h-8 text-xs">
+                  Add Check-in
+                </Button>
+              </div>
+              {checkIns.length === 0 ? (
+                <p className="text-xs text-zinc-600 italic border border-dashed border-zinc-900 rounded-lg p-4 text-center">No check-ins have been submitted yet.</p>
+              ) : (
+                <div className="space-y-3">
+                  {checkIns.map((checkIn) => (
+                    <div key={checkIn.id} className="border-l-2 border-indigo-900 pl-3 py-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant={checkIn.status === "COMPLETED" ? "success" : checkIn.status === "MISSED" ? "destructive" : "warning"} className="text-[9px]">
+                          {checkIn.status.replace("_", " ").toLowerCase()}
+                        </Badge>
+                        <span className="text-xs font-semibold text-zinc-300">@{checkIn.userId?.username || "collaborator"}</span>
+                        <span className="text-[10px] text-zinc-500">{new Date(checkIn.createdAt).toLocaleString()}</span>
+                      </div>
+                      {checkIn.notes ? <p className="text-xs text-zinc-400 mt-1.5 leading-relaxed">{checkIn.notes}</p> : null}
+                    </div>
+                  ))}
+                </div>
+              )}
             </Card>
 
             {/* Micro-Accountability Info panel */}
@@ -391,6 +457,45 @@ export default function TaskDetailPage() {
               </Button>
             </div>
           </div>
+        </Modal>
+
+        <Modal
+          isOpen={isCheckInModalOpen}
+          onClose={() => setIsCheckInModalOpen(false)}
+          title="Submit Check-in"
+        >
+          <form onSubmit={handleSubmitCheckIn} className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Status</label>
+              <select
+                value={checkInStatus}
+                onChange={(e) => setCheckInStatus(e.target.value as CheckInStatus)}
+                className="flex w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-600"
+              >
+                <option value="COMPLETED">Completed</option>
+                <option value="IN_PROGRESS">In Progress</option>
+                <option value="MISSED">Missed</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Notes</label>
+              <textarea
+                value={checkInNotes}
+                onChange={(e) => setCheckInNotes(e.target.value)}
+                rows={4}
+                className="flex w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600"
+                placeholder="Optional context for your partner"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-zinc-900">
+              <Button type="button" variant="outline" onClick={() => setIsCheckInModalOpen(false)} size="sm">
+                Cancel
+              </Button>
+              <Button type="submit" size="sm">
+                Submit
+              </Button>
+            </div>
+          </form>
         </Modal>
       </div>
     </AppLayout>

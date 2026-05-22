@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createTask, getTasks, getTaskById, updateTask, deleteTask } from '../controllers/taskController';
+import { createTask, getTasks, getTaskById, updateTask, deleteTask, getDashboardData } from '../controllers/taskController';
 import { authMiddleware } from '../middleware/authMiddleware';
 import { validateObjectId } from '../middleware/validateObjectId';
 
@@ -11,6 +11,7 @@ router.use(authMiddleware);
 // CRUD operations on tasks
 router.post('/', createTask);
 router.get('/', getTasks);
+router.get('/dashboard', getDashboardData);
 
 // ID-parameterized routes
 router.get('/:id', validateObjectId('id'), getTaskById);

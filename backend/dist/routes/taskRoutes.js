@@ -10,6 +10,7 @@ router.use(authMiddleware_1.authMiddleware);
 // CRUD operations on tasks
 router.post('/', taskController_1.createTask);
 router.get('/', taskController_1.getTasks);
+router.get('/dashboard', taskController_1.getDashboardData);
 // ID-parameterized routes
 router.get('/:id', (0, validateObjectId_1.validateObjectId)('id'), taskController_1.getTaskById);
 router.put('/:id', (0, validateObjectId_1.validateObjectId)('id'), taskController_1.updateTask);

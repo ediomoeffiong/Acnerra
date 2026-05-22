@@ -3,60 +3,57 @@ import { Bell, Menu } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { cn } from "../../utils";
+import { notificationService } from "../../services/notificationService";
+import type { NotificationItem } from "../../services/notificationService";
 
 interface NavbarProps {
   activeTab: string;
   onMenuClick: () => void;
 }
 
-interface Notification {
-  id: string;
-  title: string;
-  description: string;
-  time: string;
-  isRead: boolean;
-  type: "invite" | "task" | "checkin";
-}
-
 const Navbar: React.FC<NavbarProps> = ({ activeTab, onMenuClick }) => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [isNotifOpen, setIsNotifOpen] = React.useState(false);
-  const [notifications, setNotifications] = React.useState<Notification[]>([
-    {
-      id: "1",
-      title: "Buddy Invite Received",
-      description: "Alex invited you to their accountability group.",
-      time: "2 hours ago",
-      isRead: false,
-      type: "invite",
-    },
-    {
-      id: "2",
-      title: "Task Deadline Approaching",
-      description: "Submit task 'Acnerra Backend API' check-in by 5:00 PM.",
-      time: "4 hours ago",
-      isRead: false,
-      type: "task",
-    },
-    {
-      id: "3",
-      title: "Buddy Submitted Check-in",
-      description: "Sarah updated their check-in for 'UI Design Review'.",
-      time: "Yesterday",
-      isRead: true,
-      type: "checkin",
-    },
-  ]);
+  const [notifications, setNotifications] = React.useState<NotificationItem[]>([]);
 
-  const unreadCount = notifications.filter((n) => !n.isRead).length;
+  const unreadCount = notifications.filter((n) => !n.read).length;
 
-  const markAllRead = () => {
-    setNotifications(notifications.map((n) => ({ ...n, isRead: true })));
+  const loadNotifications = React.useCallback(async () => {
+    try {
+      const data = await notificationService.listNotifications();
+      setNotifications(data.notifications);
+    } catch (error) {
+      console.error("Failed to load notifications:", error);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (user) {
+      loadNotifications();
+    }
+  }, [loadNotifications, user]);
+
+  const markAllRead = async () => {
+    await notificationService.markAllRead();
+    setNotifications(notifications.map((n) => ({ ...n, read: true })));
   };
 
-  const markAsRead = (id: string) => {
-    setNotifications(notifications.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
+  const markAsRead = async (notif: NotificationItem) => {
+    if (!notif.read) {
+      await notificationService.markRead(notif.id);
+      setNotifications(notifications.map((n) => (n.id === notif.id ? { ...n, read: true } : n)));
+    }
+    if (notif.taskId) navigate(`/tasks/${notif.taskId}`);
+    if (notif.type.includes("INVITE")) navigate("/dashboard");
+  };
+
+  const formatTime = (value: string) => {
+    const minutes = Math.round((Date.now() - new Date(value).getTime()) / 60000);
+    if (minutes < 1) return "Just now";
+    if (minutes < 60) return `${minutes}m ago`;
+    if (minutes < 1440) return `${Math.round(minutes / 60)}h ago`;
+    return new Date(value).toLocaleDateString();
   };
 
   // Close dropdown on click outside
@@ -125,30 +122,30 @@ const Navbar: React.FC<NavbarProps> = ({ activeTab, onMenuClick }) => {
                   notifications.map((notif) => (
                     <div
                       key={notif.id}
-                      onClick={() => markAsRead(notif.id)}
+                      onClick={() => markAsRead(notif)}
                       className={cn(
                         "group relative rounded-lg p-2.5 transition-colors cursor-pointer border border-transparent",
                         {
-                          "bg-zinc-900/40 border-zinc-900/60 hover:bg-zinc-900": notif.isRead,
-                          "bg-indigo-950/20 border-indigo-900/20 hover:bg-indigo-950/30": !notif.isRead,
+                          "bg-zinc-900/40 border-zinc-900/60 hover:bg-zinc-900": notif.read,
+                          "bg-indigo-950/20 border-indigo-900/20 hover:bg-indigo-950/30": !notif.read,
                         }
                       )}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <span
                           className={cn("text-xs font-semibold", {
-                            "text-zinc-200": notif.isRead,
-                            "text-indigo-400": !notif.isRead,
+                            "text-zinc-200": notif.read,
+                            "text-indigo-400": !notif.read,
                           })}
                         >
                           {notif.title}
                         </span>
-                        {!notif.isRead ? (
+                        {!notif.read ? (
                           <span className="h-1.5 w-1.5 rounded-full bg-indigo-500 mt-1" />
                         ) : null}
                       </div>
-                      <p className="text-[11px] text-zinc-400 mt-1">{notif.description}</p>
-                      <span className="text-[10px] text-zinc-500 mt-2 block">{notif.time}</span>
+                      <p className="text-[11px] text-zinc-400 mt-1">{notif.message}</p>
+                      <span className="text-[10px] text-zinc-500 mt-2 block">{formatTime(notif.createdAt)}</span>
                     </div>
                   ))
                 )}

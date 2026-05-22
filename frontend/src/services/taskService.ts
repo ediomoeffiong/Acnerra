@@ -10,10 +10,18 @@ export interface Task {
   status: TaskStatus;
   priority: TaskPriority;
   dueDate: string | null;
-  creatorId: string;
-  partnerId?: string | null;
+  creatorId: string | UserSummary;
+  partnerId?: string | UserSummary | null;
+  collaboratorIds?: UserSummary[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface UserSummary {
+  id: string;
+  username: string;
+  name?: string;
+  image?: string;
 }
 
 export interface CreateTaskInput {
@@ -30,6 +38,39 @@ export interface UpdateTaskInput {
   status?: TaskStatus;
   priority?: TaskPriority;
   dueDate?: string | null;
+  partnerId?: string | null;
+}
+
+export interface DashboardStats {
+  totalTasks: number;
+  completedTasks: number;
+  inProgressTasks: number;
+  pendingTasks: number;
+  overdueTasks: number;
+  sharedTasks: number;
+}
+
+export interface ActivityLog {
+  id: string;
+  text: string;
+  time: string;
+}
+
+export interface CheckInReminder {
+  taskId: string;
+  taskTitle: string;
+  partnerName: string;
+  message: string;
+}
+
+export interface DashboardData {
+  stats: DashboardStats;
+  allTasks: Task[];
+  overdueTasks: Task[];
+  upcomingDeadlines: Task[];
+  sharedTasks: Task[];
+  activities: ActivityLog[];
+  checkInReminders: CheckInReminder[];
 }
 
 export const taskService = {
@@ -37,6 +78,12 @@ export const taskService = {
   getTasks: async (): Promise<Task[]> => {
     const response = await api.get('/tasks');
     return response.data.tasks;
+  },
+
+  // Get aggregated dashboard data
+  getDashboardData: async (): Promise<DashboardData> => {
+    const response = await api.get('/tasks/dashboard');
+    return response.data;
   },
 
   // Get a single task by ID

@@ -11,6 +11,10 @@ const mongoose_1 = __importDefault(require("mongoose"));
 const authRoutes_1 = __importDefault(require("./routes/authRoutes"));
 const profileRoutes_1 = __importDefault(require("./routes/profileRoutes"));
 const taskRoutes_1 = __importDefault(require("./routes/taskRoutes"));
+const inviteRoutes_1 = __importDefault(require("./routes/inviteRoutes"));
+const checkInRoutes_1 = __importDefault(require("./routes/checkInRoutes"));
+const notificationRoutes_1 = __importDefault(require("./routes/notificationRoutes"));
+const analyticsRoutes_1 = __importDefault(require("./routes/analyticsRoutes"));
 const app = (0, express_1.default)();
 // Allowed CORS origins
 const allowedOrigins = [
@@ -72,6 +76,10 @@ app.use('/api/v1/auth', authRoutes_1.default);
 app.use('/api/v1/profiles', profileRoutes_1.default);
 // Task Routes
 app.use('/api/v1/tasks', taskRoutes_1.default);
+app.use('/api/v1/tasks/:taskId/check-ins', checkInRoutes_1.default);
+app.use('/api/v1/invites', inviteRoutes_1.default);
+app.use('/api/v1/notifications', notificationRoutes_1.default);
+app.use('/api/v1/analytics', analyticsRoutes_1.default);
 // Error handling middleware
 app.use(errorMiddleware_1.errorHandler);
 exports.default = app;
