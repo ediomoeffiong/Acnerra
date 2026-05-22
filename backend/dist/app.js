@@ -16,6 +16,8 @@ const checkInRoutes_1 = __importDefault(require("./routes/checkInRoutes"));
 const notificationRoutes_1 = __importDefault(require("./routes/notificationRoutes"));
 const analyticsRoutes_1 = __importDefault(require("./routes/analyticsRoutes"));
 const app = (0, express_1.default)();
+// Trust proxy for secure cookies behind reverse proxy (Render)
+app.set('trust proxy', 1);
 // Allowed CORS origins
 const allowedOrigins = [
     'http://localhost:5173',
@@ -57,6 +59,13 @@ app.use(express_1.default.json());
 app.use(express_1.default.urlencoded({ extended: true }));
 app.use((0, cookie_parser_1.default)());
 // Routes
+app.get('/', (req, res) => {
+    res.status(200).json({
+        message: "Welcome to the Acnerra API",
+        status: "healthy",
+        version: "1.0.0"
+    });
+});
 app.get('/health', (req, res) => {
     res.status(200).json({ status: 'OK' });
 });

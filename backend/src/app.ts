@@ -14,6 +14,9 @@ import analyticsRoutes from './routes/analyticsRoutes';
 
 const app = express();
 
+// Trust proxy for secure cookies behind reverse proxy (Render)
+app.set('trust proxy', 1);
+
 // Allowed CORS origins
 const allowedOrigins = [
   'http://localhost:5173',
@@ -57,6 +60,14 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
 // Routes
+app.get('/', (req, res) => {
+  res.status(200).json({
+    message: "Welcome to the Acnerra API",
+    status: "healthy",
+    version: "1.0.0"
+  });
+});
+
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK' });
 });

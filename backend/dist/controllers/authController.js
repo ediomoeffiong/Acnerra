@@ -44,7 +44,7 @@ const register = async (req, res) => {
         }).save();
         const expires = new Date(Date.now() + auth_1.SESSION_DURATION);
         const session = await (0, auth_1.encrypt)({ userId: user._id.toString(), expires });
-        const isProduction = process.env.NODE_ENV === 'production';
+        const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER === 'true';
         res.cookie('session', session, {
             expires,
             httpOnly: true,
@@ -97,7 +97,7 @@ const login = async (req, res) => {
         }
         const expires = new Date(Date.now() + auth_1.SESSION_DURATION);
         const session = await (0, auth_1.encrypt)({ userId: user._id.toString(), expires });
-        const isProduction = process.env.NODE_ENV === 'production';
+        const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER === 'true';
         res.cookie('session', session, {
             expires,
             httpOnly: true,
@@ -126,7 +126,7 @@ const login = async (req, res) => {
 };
 exports.login = login;
 const logout = async (req, res) => {
-    const isProduction = process.env.NODE_ENV === 'production';
+    const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER === 'true';
     res.clearCookie('session', {
         path: '/',
         secure: isProduction,

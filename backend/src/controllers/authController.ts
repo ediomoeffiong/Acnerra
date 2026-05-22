@@ -50,7 +50,7 @@ export const register = async (req: Request, res: Response) => {
     const expires = new Date(Date.now() + SESSION_DURATION);
     const session = await encrypt({ userId: user._id.toString(), expires });
 
-    const isProduction = process.env.NODE_ENV === 'production';
+    const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER === 'true';
     res.cookie('session', session, {
       expires,
       httpOnly: true,
@@ -111,7 +111,7 @@ export const login = async (req: Request, res: Response) => {
     const expires = new Date(Date.now() + SESSION_DURATION);
     const session = await encrypt({ userId: user._id.toString(), expires });
 
-    const isProduction = process.env.NODE_ENV === 'production';
+    const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER === 'true';
     res.cookie('session', session, {
       expires,
       httpOnly: true,
@@ -140,7 +140,7 @@ export const login = async (req: Request, res: Response) => {
 };
 
 export const logout = async (req: Request, res: Response) => {
-  const isProduction = process.env.NODE_ENV === 'production';
+  const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER === 'true';
   res.clearCookie('session', {
     path: '/',
     secure: isProduction,
