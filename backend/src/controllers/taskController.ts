@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { z } from 'zod';
 import { Task, TaskStatus, TaskPriority } from '../models/Task';
 import { CheckIn } from '../models/CheckIn';
+import { User } from '../models/User';
 import { createNotification } from '../lib/notifications';
 import { canAccessTask, getIdString, getTaskParticipantIds, isTaskCreator } from '../lib/taskAccess';
 
@@ -17,6 +18,8 @@ const TaskCreateSchema = z.object({
     return isNaN(parsed.getTime()) ? null : parsed;
   }),
   partnerId: z.string().nullable().optional(),
+  isPrivate: z.boolean().optional().default(false),
+  workspaceId: z.string().nullable().optional(),
 });
 
 const TaskUpdateSchema = z.object({
@@ -31,6 +34,8 @@ const TaskUpdateSchema = z.object({
     return isNaN(parsed.getTime()) ? null : parsed;
   }),
   partnerId: z.string().nullable().optional(),
+  isPrivate: z.boolean().optional(),
+  workspaceId: z.string().nullable().optional(),
 });
 
 // Helper for ownership validation (both creator and partner have access)
@@ -59,7 +64,7 @@ export const createTask = async (req: any, res: Response) => {
     });
   }
 
-  const { title, description, status, priority, dueDate, partnerId } = validatedFields.data;
+  const { title, description, status, priority, dueDate, partnerId, isPrivate, workspaceId } = validatedFields.data;
   const creatorId = req.user.userId;
 
   try {
@@ -75,6 +80,16 @@ export const createTask = async (req: any, res: Response) => {
       });
     }
 
+    let partnerIdToSet = null;
+    let collaboratorIdsToSet: any[] = [];
+
+    const user = await User.findById(creatorId).select('username accountabilityPartners');
+
+    if (!isPrivate && user && user.accountabilityPartners && user.accountabilityPartners.length > 0) {
+      partnerIdToSet = user.accountabilityPartners[0];
+      collaboratorIdsToSet = user.accountabilityPartners;
+    }
+
     const task = new Task({
       title,
       description,
@@ -82,10 +97,26 @@ export const createTask = async (req: any, res: Response) => {
       priority,
       dueDate,
       creatorId,
-      partnerId: null,
+      partnerId: partnerIdToSet,
+      collaboratorIds: collaboratorIdsToSet,
+      isPrivate: !!isPrivate,
+      workspaceId: workspaceId || null,
     });
 
     await task.save();
+
+    // Send notifications to auto-added partners
+    if (!isPrivate && user && user.accountabilityPartners && user.accountabilityPartners.length > 0) {
+      await Promise.all(user.accountabilityPartners.map((pId: any) =>
+        createNotification({
+          userId: pId,
+          type: 'INVITE_ACCEPTED',
+          title: 'Accountability task link',
+          message: `@${user.username} automatically added you to their task "${title}".`,
+          taskId: task._id,
+        })
+      ));
+    }
     
     // Populate before returning
     await task.populate([
@@ -112,15 +143,35 @@ export const getTasks = async (req: any, res: Response) => {
     return res.status(401).json({ message: "Not authenticated" });
   }
 
+  const { workspaceId } = req.query;
+
   try {
+    const query: any = {
+      $or: [
+        { creatorId: req.user.userId },
+        { 
+          $and: [
+            { isPrivate: { $ne: true } },
+            { $or: [{ partnerId: req.user.userId }, { collaboratorIds: req.user.userId }] }
+          ]
+        }
+      ]
+    };
+
+    if (workspaceId !== undefined) {
+      if (workspaceId === 'null' || workspaceId === 'none') {
+        query.workspaceId = null;
+      } else {
+        query.workspaceId = workspaceId;
+      }
+    }
+
     // Sort by createdAt descending so newly created tasks appear immediately at the top
-    const tasks = await Task.find({
-      $or: [{ creatorId: req.user.userId }, { partnerId: req.user.userId }, { collaboratorIds: req.user.userId }]
-    })
-    .populate('creatorId', 'username name image')
-    .populate('partnerId', 'username name image')
-    .populate('collaboratorIds', 'username name image')
-    .sort({ createdAt: -1 });
+    const tasks = await Task.find(query)
+      .populate('creatorId', 'username name image')
+      .populate('partnerId', 'username name image')
+      .populate('collaboratorIds', 'username name image')
+      .sort({ createdAt: -1 });
 
     return res.status(200).json({
       tasks: tasks.map(task => task.toJSON()),
@@ -214,6 +265,16 @@ export const updateTask = async (req: any, res: Response) => {
       }
       task.dueDate = updates.dueDate;
     }
+    if (updates.workspaceId !== undefined) {
+      task.workspaceId = (updates.workspaceId as any) || null;
+    }
+    if (updates.isPrivate !== undefined) {
+      task.isPrivate = !!updates.isPrivate;
+      if (task.isPrivate) {
+        task.partnerId = null;
+        task.collaboratorIds = [];
+      }
+    }
     if (updates.partnerId !== undefined) {
       if (updates.partnerId) {
         return res.status(400).json({
@@ -306,9 +367,17 @@ export const getDashboardData = async (req: any, res: Response) => {
   const userId = req.user.userId;
 
   try {
-    // 1. Fetch all tasks where user is creator or partner
+    // 1. Fetch all tasks where user is creator, or partner/collaborator on a public task
     const allTasks = await Task.find({
-      $or: [{ creatorId: userId }, { partnerId: userId }, { collaboratorIds: userId }]
+      $or: [
+        { creatorId: userId },
+        { 
+          $and: [
+            { isPrivate: { $ne: true } },
+            { $or: [{ partnerId: userId }, { collaboratorIds: userId }] }
+          ]
+        }
+      ]
     })
     .populate('creatorId', 'username name image')
     .populate('partnerId', 'username name image')

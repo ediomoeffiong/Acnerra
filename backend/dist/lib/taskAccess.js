@@ -10,6 +10,9 @@ const getIdString = (value) => {
 };
 exports.getIdString = getIdString;
 const getTaskParticipantIds = (task) => {
+    if (task.isPrivate) {
+        return [(0, exports.getIdString)(task.creatorId)].filter(Boolean);
+    }
     const ids = [
         (0, exports.getIdString)(task.creatorId),
         (0, exports.getIdString)(task.partnerId),

@@ -4,6 +4,10 @@ const express_1 = require("express");
 const profileController_1 = require("../controllers/profileController");
 const authMiddleware_1 = require("../middleware/authMiddleware");
 const router = (0, express_1.Router)();
+// Protected routes for accountability partners
+router.get('/partners', authMiddleware_1.authMiddleware, profileController_1.getPartners);
+router.post('/partners', authMiddleware_1.authMiddleware, profileController_1.addPartner);
+router.delete('/partners/:partnerId', authMiddleware_1.authMiddleware, profileController_1.removePartner);
 // Protected route to search profiles by username or email
 router.get('/', authMiddleware_1.authMiddleware, profileController_1.searchProfiles);
 // Public route to view any user profile

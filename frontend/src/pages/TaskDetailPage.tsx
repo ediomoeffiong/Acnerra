@@ -11,9 +11,12 @@ import { taskService } from "../services/taskService";
 import type { Task, TaskStatus, TaskPriority } from "../services/taskService";
 import { checkInService } from "../services/checkInService";
 import type { CheckIn, CheckInStatus } from "../services/checkInService";
+import { workspaceService } from "../services/workspaceService";
+import type { Workspace } from "../services/workspaceService";
 import { 
   ArrowLeft, Calendar, Trash2, Edit2, CheckCircle2, 
-  Clock, Circle, ShieldAlert, AlertCircle, Sparkles, MessageSquarePlus
+  Clock, Circle, ShieldAlert, AlertCircle, Sparkles, MessageSquarePlus,
+  Lock, Unlock, Folder
 } from "lucide-react";
 
 export default function TaskDetailPage() {
@@ -38,6 +41,17 @@ export default function TaskDetailPage() {
   const [editDueDate, setEditDueDate] = React.useState("");
   const [checkInStatus, setCheckInStatus] = React.useState<CheckInStatus>("IN_PROGRESS");
   const [checkInNotes, setCheckInNotes] = React.useState("");
+  
+  // Workspaces and privacy state
+  const [workspaces, setWorkspaces] = React.useState<Workspace[]>([]);
+  const [editWorkspaceId, setEditWorkspaceId] = React.useState("");
+  const [editIsPrivate, setEditIsPrivate] = React.useState(false);
+
+  const workspaceName = React.useMemo(() => {
+    if (!task?.workspaceId || workspaces.length === 0) return null;
+    const w = workspaces.find(item => item.id === task.workspaceId || (item as any)._id === task.workspaceId);
+    return w ? w.name : null;
+  }, [task?.workspaceId, workspaces]);
   const formatToDateTimeLocal = (dateString?: string | null) => {
     if (!dateString) return "";
     const d = new Date(dateString);
@@ -63,12 +77,14 @@ export default function TaskDetailPage() {
     try {
       if (!background) setLoading(true);
       setError(null);
-      const [fetchedTask, fetchedCheckIns] = await Promise.all([
+      const [fetchedTask, fetchedCheckIns, workspacesList] = await Promise.all([
         taskService.getTask(id),
         checkInService.listCheckIns(id),
+        workspaceService.getWorkspaces().catch(() => []),
       ]);
       setTask(fetchedTask);
       setCheckIns(fetchedCheckIns);
+      setWorkspaces(workspacesList);
       
       // Initialize edit states (only if not background load, to avoid overwriting typed edit states!)
       if (!background) {
@@ -77,6 +93,8 @@ export default function TaskDetailPage() {
         setEditPriority(fetchedTask.priority);
         setEditStatus(fetchedTask.status);
         setEditDueDate(formatToDateTimeLocal(fetchedTask.dueDate));
+        setEditWorkspaceId(fetchedTask.workspaceId || "");
+        setEditIsPrivate(!!fetchedTask.isPrivate);
       }
     } catch (err: any) {
       console.error("Error fetching task details:", err);
@@ -120,7 +138,9 @@ export default function TaskDetailPage() {
         description: editDescription,
         status: editStatus,
         priority: editPriority,
-        dueDate: editDueDate || null
+        dueDate: editDueDate || null,
+        isPrivate: editIsPrivate,
+        workspaceId: editWorkspaceId || null
       });
       
       setTask(updated);
@@ -312,9 +332,21 @@ export default function TaskDetailPage() {
 
               {/* Title and Description */}
               <div className="space-y-3.5">
-                <h1 className="text-2xl font-extrabold text-zinc-100 tracking-tight leading-tight">
-                  {task.title}
-                </h1>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h1 className="text-2xl font-extrabold text-zinc-100 tracking-tight leading-tight">
+                    {task.title}
+                  </h1>
+                  {task.isPrivate && (
+                    <Badge variant="warning" className="flex items-center gap-1.5 text-[9px] px-2 py-0.5 uppercase tracking-wider font-bold">
+                      <Lock className="h-3 w-3 text-amber-500" /> Private Task
+                    </Badge>
+                  )}
+                  {workspaceName && (
+                    <Badge variant="secondary" className="flex items-center gap-1.5 text-[9px] px-2 py-0.5 uppercase tracking-wider font-bold">
+                      <Folder className="h-3 w-3 text-indigo-400" /> {workspaceName}
+                    </Badge>
+                  )}
+                </div>
                 
                 {task.description ? (
                   <p className="text-zinc-300/90 text-sm leading-relaxed whitespace-pre-wrap max-w-2xl bg-zinc-950/40 p-4 rounded-xl border border-zinc-900/60">
@@ -457,6 +489,50 @@ export default function TaskDetailPage() {
               value={editDueDate}
               onChange={(e) => setEditDueDate(e.target.value)}
             />
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
+              <div className="space-y-1.5 text-left">
+                <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400 block">Workspace</label>
+                <select
+                  value={editWorkspaceId}
+                  onChange={(e) => setEditWorkspaceId(e.target.value)}
+                  className="flex w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600"
+                >
+                  <option value="">Inbox (No Workspace)</option>
+                  {workspaces.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div 
+                className="flex items-center gap-3 bg-zinc-950/30 border border-zinc-900 px-4 py-2 rounded-lg text-left self-end h-[38px] cursor-pointer" 
+                onClick={() => setEditIsPrivate(!editIsPrivate)}
+              >
+                <button
+                  type="button"
+                  className="text-zinc-400 hover:text-zinc-250 transition-colors focus:outline-none"
+                >
+                  {editIsPrivate ? (
+                    <Lock className="h-4 w-4 text-amber-500" />
+                  ) : (
+                    <Unlock className="h-4 w-4 text-zinc-500" />
+                  )}
+                </button>
+                <div className="flex flex-col">
+                  <span className="text-xs font-bold text-zinc-300">Private Task</span>
+                  <span className="text-[8px] text-zinc-500 leading-tight">Accountability partners won't be linked</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={editIsPrivate}
+                  onChange={(e) => setEditIsPrivate(e.target.checked)}
+                  className="ml-auto accent-indigo-500 rounded border-zinc-800"
+                />
+              </div>
+            </div>
 
             <div className="flex justify-end gap-2 pt-2 border-t border-zinc-900 mt-2">
               <Button type="button" variant="outline" onClick={() => setIsEditModalOpen(false)} size="sm">

@@ -162,3 +162,103 @@ export const searchProfiles = async (req: any, res: Response) => {
     });
   }
 };
+
+// Retrieve user's accountability partners
+export const getPartners = async (req: any, res: Response) => {
+  if (!req.user) {
+    return res.status(401).json({ message: "Not authenticated" });
+  }
+
+  try {
+    const user = await User.findById(req.user.userId).populate('accountabilityPartners', 'id username name bio image');
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    return res.status(200).json({ partners: user.accountabilityPartners || [] });
+  } catch (error) {
+    console.error("Get partners error:", error);
+    return res.status(500).json({ message: "An error occurred while fetching partners." });
+  }
+};
+
+// Add a user as an accountability partner
+export const addPartner = async (req: any, res: Response) => {
+  if (!req.user) {
+    return res.status(401).json({ message: "Not authenticated" });
+  }
+
+  const { partnerId } = req.body;
+  if (!partnerId) {
+    return res.status(400).json({ message: "Partner ID is required." });
+  }
+
+  if (partnerId === req.user.userId) {
+    return res.status(400).json({ message: "You cannot add yourself as an accountability partner." });
+  }
+
+  try {
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const partner = await User.findById(partnerId);
+    if (!partner) {
+      return res.status(404).json({ message: "Partner user not found." });
+    }
+
+    user.accountabilityPartners = user.accountabilityPartners || [];
+    const isAlreadyPartner = user.accountabilityPartners.some(
+      (id) => id.toString() === partnerId
+    );
+
+    if (isAlreadyPartner) {
+      return res.status(400).json({ message: "User is already an accountability partner." });
+    }
+
+    user.accountabilityPartners.push(partnerId as any);
+    await user.save();
+
+    await user.populate('accountabilityPartners', 'id username name bio image');
+
+    return res.status(200).json({
+      message: "Partner added successfully.",
+      partners: user.accountabilityPartners
+    });
+  } catch (error) {
+    console.error("Add partner error:", error);
+    return res.status(500).json({ message: "An error occurred while adding partner." });
+  }
+};
+
+// Remove a user from accountability partners
+export const removePartner = async (req: any, res: Response) => {
+  if (!req.user) {
+    return res.status(401).json({ message: "Not authenticated" });
+  }
+
+  const { partnerId } = req.params;
+
+  try {
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    user.accountabilityPartners = (user.accountabilityPartners || []).filter(
+      (id) => id.toString() !== partnerId
+    );
+    
+    await user.save();
+
+    await user.populate('accountabilityPartners', 'id username name bio image');
+
+    return res.status(200).json({
+      message: "Partner removed successfully.",
+      partners: user.accountabilityPartners
+    });
+  } catch (error) {
+    console.error("Remove partner error:", error);
+    return res.status(500).json({ message: "An error occurred while removing partner." });
+  }
+};

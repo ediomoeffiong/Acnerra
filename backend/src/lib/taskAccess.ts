@@ -5,6 +5,9 @@ export const getIdString = (value: any): string | null => {
 };
 
 export const getTaskParticipantIds = (task: any): string[] => {
+  if (task.isPrivate) {
+    return [getIdString(task.creatorId)].filter(Boolean) as string[];
+  }
   const ids = [
     getIdString(task.creatorId),
     getIdString(task.partnerId),

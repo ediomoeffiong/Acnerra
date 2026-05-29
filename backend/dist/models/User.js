@@ -9,6 +9,7 @@ const UserSchema = new mongoose_1.Schema({
     password: { type: String, required: true },
     image: { type: String, default: null },
     bio: { type: String, default: '' },
+    accountabilityPartners: [{ type: mongoose_1.Schema.Types.ObjectId, ref: 'User' }],
 }, { timestamps: true });
 // Convert _id to id virtual getter for frontend compatibility
 UserSchema.virtual('id').get(function () {

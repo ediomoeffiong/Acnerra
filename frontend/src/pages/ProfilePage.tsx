@@ -79,6 +79,8 @@ export default function ProfilePage() {
       navigate("/dashboard", { state: { activeTab: "dashboard" } });
     } else if (tab === "analytics") {
       navigate("/dashboard", { state: { activeTab: "analytics" } });
+    } else if (tab === "partners") {
+      navigate("/dashboard", { state: { activeTab: "partners" } });
     }
   };
 

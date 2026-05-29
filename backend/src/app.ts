@@ -11,6 +11,7 @@ import inviteRoutes from './routes/inviteRoutes';
 import checkInRoutes from './routes/checkInRoutes';
 import notificationRoutes from './routes/notificationRoutes';
 import analyticsRoutes from './routes/analyticsRoutes';
+import workspaceRoutes from './routes/workspaceRoutes';
 
 const app = express();
 
@@ -96,6 +97,7 @@ app.use('/api/v1/tasks/:taskId/check-ins', checkInRoutes);
 app.use('/api/v1/invites', inviteRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/analytics', analyticsRoutes);
+app.use('/api/v1/workspaces', workspaceRoutes);
 
 // Error handling middleware
 app.use(errorHandler);

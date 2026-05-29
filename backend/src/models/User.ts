@@ -7,6 +7,7 @@ const UserSchema = new Schema({
   password: { type: String, required: true },
   image: { type: String, default: null },
   bio: { type: String, default: '' },
+  accountabilityPartners: [{ type: Schema.Types.ObjectId, ref: 'User' }],
 }, { timestamps: true });
 
 // Convert _id to id virtual getter for frontend compatibility

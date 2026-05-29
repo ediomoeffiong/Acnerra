@@ -4,6 +4,7 @@ exports.getDashboardData = exports.deleteTask = exports.updateTask = exports.get
 const zod_1 = require("zod");
 const Task_1 = require("../models/Task");
 const CheckIn_1 = require("../models/CheckIn");
+const User_1 = require("../models/User");
 const notifications_1 = require("../lib/notifications");
 const taskAccess_1 = require("../lib/taskAccess");
 // Zod schemas for validation
@@ -19,6 +20,8 @@ const TaskCreateSchema = zod_1.z.object({
         return isNaN(parsed.getTime()) ? null : parsed;
     }),
     partnerId: zod_1.z.string().nullable().optional(),
+    isPrivate: zod_1.z.boolean().optional().default(false),
+    workspaceId: zod_1.z.string().nullable().optional(),
 });
 const TaskUpdateSchema = zod_1.z.object({
     title: zod_1.z.string().min(1, "Title cannot be empty").max(100, "Title is too long").trim().optional(),
@@ -34,6 +37,8 @@ const TaskUpdateSchema = zod_1.z.object({
         return isNaN(parsed.getTime()) ? null : parsed;
     }),
     partnerId: zod_1.z.string().nullable().optional(),
+    isPrivate: zod_1.z.boolean().optional(),
+    workspaceId: zod_1.z.string().nullable().optional(),
 });
 // Helper for ownership validation (both creator and partner have access)
 const checkOwnership = (task, req) => {
@@ -58,7 +63,7 @@ const createTask = async (req, res) => {
             errors: validatedFields.error.flatten().fieldErrors,
         });
     }
-    const { title, description, status, priority, dueDate, partnerId } = validatedFields.data;
+    const { title, description, status, priority, dueDate, partnerId, isPrivate, workspaceId } = validatedFields.data;
     const creatorId = req.user.userId;
     try {
         if (dueDate && new Date(dueDate) <= new Date()) {
@@ -71,6 +76,13 @@ const createTask = async (req, res) => {
                 message: "Create the task first, then invite collaborators by username.",
             });
         }
+        let partnerIdToSet = null;
+        let collaboratorIdsToSet = [];
+        const user = await User_1.User.findById(creatorId).select('username accountabilityPartners');
+        if (!isPrivate && user && user.accountabilityPartners && user.accountabilityPartners.length > 0) {
+            partnerIdToSet = user.accountabilityPartners[0];
+            collaboratorIdsToSet = user.accountabilityPartners;
+        }
         const task = new Task_1.Task({
             title,
             description,
@@ -78,9 +90,22 @@ const createTask = async (req, res) => {
             priority,
             dueDate,
             creatorId,
-            partnerId: null,
+            partnerId: partnerIdToSet,
+            collaboratorIds: collaboratorIdsToSet,
+            isPrivate: !!isPrivate,
+            workspaceId: workspaceId || null,
         });
         await task.save();
+        // Send notifications to auto-added partners
+        if (!isPrivate && user && user.accountabilityPartners && user.accountabilityPartners.length > 0) {
+            await Promise.all(user.accountabilityPartners.map((pId) => (0, notifications_1.createNotification)({
+                userId: pId,
+                type: 'INVITE_ACCEPTED',
+                title: 'Accountability task link',
+                message: `@${user.username} automatically added you to their task "${title}".`,
+                taskId: task._id,
+            })));
+        }
         // Populate before returning
         await task.populate([
             { path: 'creatorId', select: 'username name image' },
@@ -105,11 +130,29 @@ const getTasks = async (req, res) => {
     if (!req.user) {
         return res.status(401).json({ message: "Not authenticated" });
     }
+    const { workspaceId } = req.query;
     try {
+        const query = {
+            $or: [
+                { creatorId: req.user.userId },
+                {
+                    $and: [
+                        { isPrivate: { $ne: true } },
+                        { $or: [{ partnerId: req.user.userId }, { collaboratorIds: req.user.userId }] }
+                    ]
+                }
+            ]
+        };
+        if (workspaceId !== undefined) {
+            if (workspaceId === 'null' || workspaceId === 'none') {
+                query.workspaceId = null;
+            }
+            else {
+                query.workspaceId = workspaceId;
+            }
+        }
         // Sort by createdAt descending so newly created tasks appear immediately at the top
-        const tasks = await Task_1.Task.find({
-            $or: [{ creatorId: req.user.userId }, { partnerId: req.user.userId }, { collaboratorIds: req.user.userId }]
-        })
+        const tasks = await Task_1.Task.find(query)
             .populate('creatorId', 'username name image')
             .populate('partnerId', 'username name image')
             .populate('collaboratorIds', 'username name image')
@@ -201,6 +244,16 @@ const updateTask = async (req, res) => {
             }
             task.dueDate = updates.dueDate;
         }
+        if (updates.workspaceId !== undefined) {
+            task.workspaceId = updates.workspaceId || null;
+        }
+        if (updates.isPrivate !== undefined) {
+            task.isPrivate = !!updates.isPrivate;
+            if (task.isPrivate) {
+                task.partnerId = null;
+                task.collaboratorIds = [];
+            }
+        }
         if (updates.partnerId !== undefined) {
             if (updates.partnerId) {
                 return res.status(400).json({
@@ -283,9 +336,17 @@ const getDashboardData = async (req, res) => {
     }
     const userId = req.user.userId;
     try {
-        // 1. Fetch all tasks where user is creator or partner
+        // 1. Fetch all tasks where user is creator, or partner/collaborator on a public task
         const allTasks = await Task_1.Task.find({
-            $or: [{ creatorId: userId }, { partnerId: userId }, { collaboratorIds: userId }]
+            $or: [
+                { creatorId: userId },
+                {
+                    $and: [
+                        { isPrivate: { $ne: true } },
+                        { $or: [{ partnerId: userId }, { collaboratorIds: userId }] }
+                    ]
+                }
+            ]
         })
             .populate('creatorId', 'username name image')
             .populate('partnerId', 'username name image')

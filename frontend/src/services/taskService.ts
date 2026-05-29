@@ -13,6 +13,8 @@ export interface Task {
   creatorId: string | UserSummary;
   partnerId?: string | UserSummary | null;
   collaboratorIds?: UserSummary[];
+  isPrivate?: boolean;
+  workspaceId?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -30,6 +32,8 @@ export interface CreateTaskInput {
   status?: TaskStatus;
   priority?: TaskPriority;
   dueDate?: string | null;
+  isPrivate?: boolean;
+  workspaceId?: string | null;
 }
 
 export interface UpdateTaskInput {
@@ -39,6 +43,8 @@ export interface UpdateTaskInput {
   priority?: TaskPriority;
   dueDate?: string | null;
   partnerId?: string | null;
+  isPrivate?: boolean;
+  workspaceId?: string | null;
 }
 
 export interface DashboardStats {

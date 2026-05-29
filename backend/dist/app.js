@@ -15,6 +15,7 @@ const inviteRoutes_1 = __importDefault(require("./routes/inviteRoutes"));
 const checkInRoutes_1 = __importDefault(require("./routes/checkInRoutes"));
 const notificationRoutes_1 = __importDefault(require("./routes/notificationRoutes"));
 const analyticsRoutes_1 = __importDefault(require("./routes/analyticsRoutes"));
+const workspaceRoutes_1 = __importDefault(require("./routes/workspaceRoutes"));
 const app = (0, express_1.default)();
 // Trust proxy for secure cookies behind reverse proxy (Render)
 app.set('trust proxy', 1);
@@ -89,6 +90,7 @@ app.use('/api/v1/tasks/:taskId/check-ins', checkInRoutes_1.default);
 app.use('/api/v1/invites', inviteRoutes_1.default);
 app.use('/api/v1/notifications', notificationRoutes_1.default);
 app.use('/api/v1/analytics', analyticsRoutes_1.default);
+app.use('/api/v1/workspaces', workspaceRoutes_1.default);
 // Error handling middleware
 app.use(errorMiddleware_1.errorHandler);
 exports.default = app;

@@ -11,16 +11,21 @@ import { Skeleton } from "../components/ui/Skeleton";
 import { 
   Plus, CheckCircle2, Circle, Clock, Trash2, UserPlus, 
   ArrowUpCircle, Flame, Calendar, Award, ExternalLink,
-  AlertTriangle, Bell, BarChart3
+  AlertTriangle, Bell, BarChart3, Lock, Unlock, Folder,
+  Users, Search, RefreshCcw, Edit3, Trash
 } from "lucide-react";
+import { cn } from "../utils";
 import { taskService } from "../services/taskService";
-import type { Task, DashboardData } from "../services/taskService";
+import type { Task, DashboardData, UserSummary } from "../services/taskService";
 import { inviteService } from "../services/inviteService";
 import type { Invite } from "../services/inviteService";
 import { checkInService } from "../services/checkInService";
 import type { CheckInStatus } from "../services/checkInService";
 import { analyticsService } from "../services/analyticsService";
 import type { AnalyticsData } from "../services/analyticsService";
+import { workspaceService } from "../services/workspaceService";
+import type { Workspace } from "../services/workspaceService";
+import { partnersService } from "../services/partnersService";
 import api from "../services/api";
 
 interface Buddy {
@@ -79,6 +84,24 @@ export default function DashboardPage() {
   const [checkInStatus, setCheckInStatus] = React.useState<CheckInStatus>("IN_PROGRESS");
   const [checkInNotes, setCheckInNotes] = React.useState("");
 
+  // Workspaces State
+  const [workspaces, setWorkspaces] = React.useState<Workspace[]>([]);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = React.useState<string>("all");
+  const [newTaskWorkspaceId, setNewTaskWorkspaceId] = React.useState<string>("");
+  const [newTaskIsPrivate, setNewTaskIsPrivate] = React.useState<boolean>(false);
+  const [workspaceNameInput, setWorkspaceNameInput] = React.useState("");
+  const [editingWorkspaceId, setEditingWorkspaceId] = React.useState<string | null>(null);
+  const [editingWorkspaceName, setEditingWorkspaceName] = React.useState("");
+
+  // Accountability Partners State
+  const [accountabilityPartners, setAccountabilityPartners] = React.useState<UserSummary[]>([]);
+  const [loadingPartners] = React.useState(false);
+  const [partnerSearchQuery, setPartnerSearchQuery] = React.useState("");
+  const [searchedPartnerProfiles, setSearchedPartnerProfiles] = React.useState<any[]>([]);
+  const [searchingPartners, setSearchingPartners] = React.useState(false);
+  const [partnerFeedback, setPartnerFeedback] = React.useState<string | null>(null);
+  const [partnerError, setPartnerError] = React.useState<string | null>(null);
+
   // Buddy Search state
   const [buddySearchQuery, setBuddySearchQuery] = React.useState("");
   const [searchedProfiles, setSearchedProfiles] = React.useState<any[]>([]);
@@ -93,12 +116,16 @@ export default function DashboardPage() {
       const data = await taskService.getDashboardData();
       setDashboardData(data);
       setTasks(data.allTasks || []);
-      const [inviteList, analyticsData] = await Promise.all([
+      const [inviteList, analyticsData, workspacesList, partnersList] = await Promise.all([
         inviteService.listInvites(),
         analyticsService.getAnalytics(analyticsRange),
+        workspaceService.getWorkspaces(),
+        partnersService.getPartners()
       ]);
       setInvites(inviteList);
       setAnalytics(analyticsData);
+      setWorkspaces(workspacesList);
+      setAccountabilityPartners(partnersList);
     } catch (error) {
       console.error("Failed to load dashboard data from API:", error);
     } finally {
@@ -173,6 +200,39 @@ export default function DashboardPage() {
     return Array.from(partnerMap.values());
   }, [dashboardData?.sharedTasks, invites, user?.id]);
 
+  // Computed filtered tasks lists based on workspaceId filter
+  const filteredTasks = React.useMemo(() => {
+    if (selectedWorkspaceId === "all") {
+      return tasks;
+    }
+    if (selectedWorkspaceId === "none") {
+      return tasks.filter(t => !t.workspaceId);
+    }
+    return tasks.filter(t => t.workspaceId === selectedWorkspaceId);
+  }, [tasks, selectedWorkspaceId]);
+
+  const filteredSharedTasks = React.useMemo(() => {
+    if (!dashboardData?.sharedTasks) return [];
+    if (selectedWorkspaceId === "all") {
+      return dashboardData.sharedTasks;
+    }
+    if (selectedWorkspaceId === "none") {
+      return dashboardData.sharedTasks.filter(t => !t.workspaceId);
+    }
+    return dashboardData.sharedTasks.filter(t => t.workspaceId === selectedWorkspaceId);
+  }, [dashboardData?.sharedTasks, selectedWorkspaceId]);
+
+  const filteredOverdueTasks = React.useMemo(() => {
+    if (!dashboardData?.overdueTasks) return [];
+    if (selectedWorkspaceId === "all") {
+      return dashboardData.overdueTasks;
+    }
+    if (selectedWorkspaceId === "none") {
+      return dashboardData.overdueTasks.filter(t => !t.workspaceId);
+    }
+    return dashboardData.overdueTasks.filter(t => t.workspaceId === selectedWorkspaceId);
+  }, [dashboardData?.overdueTasks, selectedWorkspaceId]);
+
   // Actions
   const getMinDateTimeString = () => {
     const now = new Date();
@@ -202,6 +262,8 @@ export default function DashboardPage() {
         description: newTaskDesc,
         priority: newTaskPriority.toUpperCase() as any,
         dueDate: newTaskDueDate || null,
+        isPrivate: newTaskIsPrivate,
+        workspaceId: newTaskWorkspaceId || null,
       });
 
       await loadDashboardData();
@@ -211,6 +273,8 @@ export default function DashboardPage() {
       setNewTaskDesc("");
       setNewTaskPriority("medium");
       setNewTaskDueDate("");
+      setNewTaskIsPrivate(false);
+      setNewTaskWorkspaceId("");
       setIsTaskModalOpen(false);
     } catch (error) {
       console.error("Failed to create task:", error);
@@ -247,6 +311,99 @@ export default function DashboardPage() {
       await loadDashboardData();
     } catch (error) {
       console.error("Failed to update invite:", error);
+    }
+  };
+
+  // Workspace Actions
+  const handleCreateWorkspace = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!workspaceNameInput.trim()) return;
+    try {
+      await workspaceService.createWorkspace(workspaceNameInput);
+      setWorkspaceNameInput("");
+      const workspacesList = await workspaceService.getWorkspaces();
+      setWorkspaces(workspacesList);
+    } catch (error) {
+      console.error("Failed to create workspace:", error);
+    }
+  };
+
+  const handleUpdateWorkspaceName = async (id: string, newName: string) => {
+    if (!newName.trim()) return;
+    try {
+      await workspaceService.updateWorkspace(id, newName);
+      setEditingWorkspaceId(null);
+      const workspacesList = await workspaceService.getWorkspaces();
+      setWorkspaces(workspacesList);
+    } catch (error) {
+      console.error("Failed to update workspace:", error);
+    }
+  };
+
+  const handleDeleteWorkspace = async (id: string) => {
+    if (!confirm("Are you sure you want to delete this workspace? Tasks will not be deleted, but they will be moved to 'Inbox'.")) return;
+    try {
+      await workspaceService.deleteWorkspace(id);
+      if (selectedWorkspaceId === id) {
+        setSelectedWorkspaceId("all");
+      }
+      const workspacesList = await workspaceService.getWorkspaces();
+      setWorkspaces(workspacesList);
+      await loadDashboardData(true);
+    } catch (error) {
+      console.error("Failed to delete workspace:", error);
+    }
+  };
+
+  const handleRestoreDefaultWorkspaces = async () => {
+    try {
+      const data = await workspaceService.restoreDefaultWorkspaces();
+      setWorkspaces(data);
+      alert("Default workspaces (Personal & Work) restored successfully.");
+    } catch (error) {
+      console.error("Failed to restore defaults:", error);
+    }
+  };
+
+  // Partners search & management Actions
+  const handlePartnerSearch = async (query: string) => {
+    setPartnerSearchQuery(query);
+    if (!query.trim()) {
+      setSearchedPartnerProfiles([]);
+      return;
+    }
+    try {
+      setSearchingPartners(true);
+      const response = await api.get(`/profiles?query=${encodeURIComponent(query)}`);
+      setSearchedPartnerProfiles(response.data.profiles || []);
+    } catch (error) {
+      console.error("Failed to search partners:", error);
+    } finally {
+      setSearchingPartners(false);
+    }
+  };
+
+  const handleAddAccountabilityPartner = async (profile: any) => {
+    try {
+      setPartnerError(null);
+      setPartnerFeedback(null);
+      await partnersService.addPartner(profile.id);
+      setPartnerFeedback(`Added @${profile.username} as an accountability partner!`);
+      const data = await partnersService.getPartners();
+      setAccountabilityPartners(data);
+    } catch (error: any) {
+      setPartnerError(error.response?.data?.message || "Could not add partner.");
+    }
+  };
+
+  const handleRemoveAccountabilityPartner = async (partnerId: string) => {
+    if (!confirm("Remove this user as an accountability partner?")) return;
+    try {
+      await partnersService.removePartner(partnerId);
+      const data = await partnersService.getPartners();
+      setAccountabilityPartners(data);
+    } catch (error) {
+      console.error("Failed to remove partner:", error);
     }
   };
 
@@ -332,6 +489,164 @@ export default function DashboardPage() {
     } else {
       return `Due on ${new Date(dueDate).toLocaleDateString()} at ${timeStr}`;
     }
+  };
+
+  // TAB: Partners tab render
+  const renderPartnersTab = () => {
+    return (
+      <div className="space-y-8 max-w-4xl mx-auto text-left">
+        {/* Header Block */}
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
+            Accountability Partners
+          </h1>
+          <p className="text-zinc-400 text-xs mt-1 leading-relaxed">
+            Manage your accountability partners. Users added here will be automatically assigned to all new milestones you create, unless you mark a milestone as a private task.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          {/* Left Block: Manage / Add Partners */}
+          <div className="md:col-span-1 space-y-5">
+            <Card className="p-5 border-zinc-900 bg-zinc-950/20 shadow-md">
+              <h3 className="text-xs font-bold text-zinc-300 tracking-wider uppercase mb-3.5 flex items-center gap-1.5">
+                <UserPlus className="h-4 w-4 text-indigo-400" /> Link Partner
+              </h3>
+              
+              <div className="space-y-4">
+                <div className="relative">
+                  <Input
+                    id="partnerSearchInput"
+                    placeholder="Search by username..."
+                    value={partnerSearchQuery}
+                    onChange={(e) => handlePartnerSearch(e.target.value)}
+                    className="pl-8"
+                  />
+                  <Search className="absolute left-2.5 top-9 h-4 w-4 text-zinc-500 pointer-events-none" />
+                </div>
+
+                {/* Feedback Alerts */}
+                {partnerFeedback && (
+                  <div className="p-2.5 rounded-lg border border-emerald-900 bg-emerald-950/20 text-emerald-400 text-[10px] font-semibold">
+                    {partnerFeedback}
+                  </div>
+                )}
+                {partnerError && (
+                  <div className="p-2.5 rounded-lg border border-red-950 bg-red-950/20 text-red-400 text-[10px] font-semibold">
+                    {partnerError}
+                  </div>
+                )}
+
+                {/* Searched Profiles List */}
+                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                  {searchingPartners ? (
+                    <div className="space-y-2 py-2">
+                      <Skeleton className="h-10 w-full rounded-lg" />
+                      <Skeleton className="h-10 w-full rounded-lg" />
+                    </div>
+                  ) : partnerSearchQuery && searchedPartnerProfiles.length === 0 ? (
+                    <p className="text-[10px] text-zinc-550 italic text-center py-4">No users found.</p>
+                  ) : (
+                    searchedPartnerProfiles.map((profile) => {
+                      const isAlreadyAP = accountabilityPartners.some((ap) => ap.id === profile.id);
+                      return (
+                        <div key={profile.id} className="flex items-center justify-between gap-3 border-b border-zinc-900/60 pb-2.5 last:border-0 last:pb-0">
+                          <div className="flex items-center gap-2">
+                            <div className="h-7 w-7 rounded-lg bg-zinc-900 border border-zinc-800 text-[10px] font-bold text-zinc-300 flex items-center justify-center">
+                              {profile.name ? profile.name[0].toUpperCase() : profile.username[0].toUpperCase()}
+                            </div>
+                            <div className="flex flex-col text-left">
+                              <span className="text-xs font-semibold text-zinc-200">{profile.name || profile.username}</span>
+                              <span className="text-[9px] text-zinc-500">@{profile.username}</span>
+                            </div>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={isAlreadyAP}
+                            onClick={() => handleAddAccountabilityPartner(profile)}
+                            className="h-6.5 text-[9px] px-2.5 font-semibold"
+                          >
+                            {isAlreadyAP ? "Linked" : "Link"}
+                          </Button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </Card>
+
+            {/* Information Banner Card */}
+            <Card className="p-4 border-indigo-950/40 bg-indigo-950/10 text-[11px] text-indigo-300 leading-relaxed space-y-2">
+              <h4 className="font-bold uppercase tracking-wider text-xs flex items-center gap-1.5">
+                <Award className="h-4 w-4 text-indigo-400" /> Automated Sync Rules
+              </h4>
+              <p>
+                Milestones created under any public workspace automatically inherit all your accountability partners. They will receive automated notifications, review check-ins, and inspect status progress boards.
+              </p>
+              <p className="text-zinc-500 font-medium">
+                To keep a milestone strictly visible to yourself, toggle the "Private Task" lock switch during task creation.
+              </p>
+            </Card>
+          </div>
+
+          {/* Right Block: Current Partners Grid list */}
+          <div className="md:col-span-2 space-y-4">
+            <div className="flex items-center justify-between pb-1 border-b border-zinc-900/60">
+              <h3 className="text-xs font-bold text-zinc-300 tracking-wider uppercase flex items-center gap-1.5">
+                <Users className="h-4 w-4 text-indigo-400" /> Current Partners ({accountabilityPartners.length})
+              </h3>
+            </div>
+
+            {loadingPartners ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <Skeleton className="h-32 w-full rounded-xl" />
+                <Skeleton className="h-32 w-full rounded-xl" />
+              </div>
+            ) : accountabilityPartners.length === 0 ? (
+              <div className="flex flex-col items-center justify-center p-16 text-center rounded-xl border border-zinc-900 bg-zinc-950/20">
+                <Users className="h-10 w-10 text-zinc-700 mb-3" />
+                <p className="text-xs font-semibold text-zinc-400">No accountability partners linked yet.</p>
+                <p className="text-[10px] text-zinc-650 mt-1">Use the search utility to add a partner and start sharing goals.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {accountabilityPartners.map((partner) => (
+                  <Card key={partner.id} className="p-4 flex flex-col justify-between border-zinc-900 bg-zinc-950/30 relative group overflow-hidden hover:border-zinc-800 transition-all duration-350">
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/[0.01] blur-xl rounded-full transition-colors group-hover:bg-indigo-500/[0.02]" />
+                    <div className="flex items-start justify-between gap-3 text-left">
+                      <div className="flex items-center gap-3">
+                        <div className="h-9 w-9 rounded-lg bg-zinc-900 border border-zinc-800 text-sm font-bold text-zinc-300 flex items-center justify-center">
+                          {partner.name ? partner.name[0].toUpperCase() : partner.username[0].toUpperCase()}
+                        </div>
+                        <div className="flex flex-col text-left">
+                          <span className="text-xs font-bold text-zinc-200">{partner.name || partner.username}</span>
+                          <span className="text-[10px] text-zinc-500">@{partner.username}</span>
+                        </div>
+                      </div>
+                      <Badge variant="success" className="text-[8px] px-1 py-0 uppercase tracking-wide">
+                        Active partner
+                      </Badge>
+                    </div>
+
+                    <div className="flex items-center justify-between border-t border-zinc-900/60 pt-3 mt-4">
+                      <span className="text-[9px] font-semibold text-indigo-400">Added to all public tasks</span>
+                      <button
+                        onClick={() => handleRemoveAccountabilityPartner(partner.id)}
+                        className="text-[10px] text-red-400 hover:text-red-300 font-semibold flex items-center gap-0.5 focus:outline-none transition-colors"
+                      >
+                        <Trash2 className="h-3 w-3" /> Remove
+                      </button>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
   };
 
   // TAB: Analytics tab render
@@ -596,6 +911,125 @@ export default function DashboardPage() {
             {/* Left Block: Task Tracker Board */}
             <div className="lg:col-span-2 space-y-6">
               
+              {/* Workspaces Horizontal Bar */}
+              <div className="bg-zinc-950/40 border border-zinc-900/60 p-4 rounded-xl space-y-3 shadow-md shadow-zinc-950/20 text-left">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-zinc-300">
+                    <Folder className="h-4 w-4 text-indigo-400" />
+                    <span className="text-xs font-bold uppercase tracking-wider">Workspaces</span>
+                  </div>
+                  <button 
+                    onClick={handleRestoreDefaultWorkspaces} 
+                    className="text-[10px] text-zinc-500 hover:text-indigo-400 transition-colors flex items-center gap-1 font-semibold"
+                    title="Restore Personal & Work defaults"
+                  >
+                    <RefreshCcw className="h-3 w-3" /> Restore Defaults
+                  </button>
+                </div>
+                <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-none flex-wrap">
+                  <button
+                    onClick={() => setSelectedWorkspaceId("all")}
+                    className={cn(
+                      "px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border shrink-0",
+                      selectedWorkspaceId === "all" 
+                        ? "bg-indigo-650 text-white border-indigo-650 shadow-lg shadow-indigo-600/20" 
+                        : "bg-zinc-900/60 text-zinc-400 border-zinc-900 hover:border-zinc-800 hover:text-zinc-200"
+                    )}
+                  >
+                    All Workspaces
+                  </button>
+                  <button
+                    onClick={() => setSelectedWorkspaceId("none")}
+                    className={cn(
+                      "px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border shrink-0",
+                      selectedWorkspaceId === "none" 
+                        ? "bg-indigo-650 text-white border-indigo-650 shadow-lg shadow-indigo-600/20" 
+                        : "bg-zinc-900/60 text-zinc-400 border-zinc-900 hover:border-zinc-800 hover:text-zinc-200"
+                    )}
+                  >
+                    Inbox (Unassigned)
+                  </button>
+                  {workspaces.map((w) => {
+                    const isSelected = selectedWorkspaceId === w.id;
+                    const isEditing = editingWorkspaceId === w.id;
+                    return (
+                      <div key={w.id} className="relative shrink-0 flex items-center">
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            className="px-2.5 py-1 rounded-lg text-xs bg-zinc-900 border border-indigo-500 text-zinc-100 font-semibold focus:outline-none w-28"
+                            value={editingWorkspaceName}
+                            onChange={(e) => setEditingWorkspaceName(e.target.value)}
+                            onBlur={() => handleUpdateWorkspaceName(w.id, editingWorkspaceName)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleUpdateWorkspaceName(w.id, editingWorkspaceName);
+                              if (e.key === "Escape") setEditingWorkspaceId(null);
+                            }}
+                            autoFocus
+                          />
+                        ) : (
+                          <div className="flex items-center">
+                            <button
+                              onClick={() => setSelectedWorkspaceId(w.id)}
+                              className={cn(
+                                "pl-3 pr-2 py-1.5 rounded-l-lg text-xs font-semibold transition-all border-y border-l shrink-0",
+                                isSelected 
+                                  ? "bg-indigo-650 text-white border-indigo-650" 
+                                  : "bg-zinc-900/60 text-zinc-400 border-zinc-900 hover:border-zinc-800 hover:text-zinc-200"
+                              )}
+                            >
+                              {w.name}
+                            </button>
+                            <div className={cn(
+                              "flex items-center gap-1 pr-1.5 py-1.5 rounded-r-lg border-y border-r transition-all shrink-0",
+                              isSelected
+                                ? "bg-indigo-650 border-indigo-650 text-indigo-200"
+                                : "bg-zinc-900/60 border-zinc-900 text-zinc-600"
+                            )}>
+                              <button
+                                onClick={() => {
+                                  setEditingWorkspaceId(w.id);
+                                  setEditingWorkspaceName(w.name);
+                                }}
+                                className="hover:text-zinc-200 transition-colors p-0.5"
+                                title="Rename"
+                              >
+                                <Edit3 className="h-3 w-3" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteWorkspace(w.id)}
+                                className="hover:text-red-400 transition-colors p-0.5"
+                                title="Delete"
+                              >
+                                <Trash className="h-3 w-3" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* Quick Add Workspace form inline */}
+                  <form onSubmit={handleCreateWorkspace} className="flex items-center gap-1 pl-1">
+                    <input
+                      type="text"
+                      placeholder="New Workspace..."
+                      value={workspaceNameInput}
+                      onChange={(e) => setWorkspaceNameInput(e.target.value)}
+                      className="px-2.5 py-1 rounded-lg text-xs bg-zinc-950 border border-zinc-900 text-zinc-350 focus:border-zinc-700 focus:outline-none w-28 placeholder:text-zinc-650 font-semibold"
+                    />
+                    <button 
+                      type="submit"
+                      className="p-1 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-indigo-400 transition-colors shrink-0"
+                      title="Create Workspace"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </button>
+                  </form>
+                </div>
+              </div>
+
               {loadingDashboard ? (
                 /* Premium Skeleton Loaders */
                 <div className="space-y-3">
@@ -618,14 +1052,14 @@ export default function DashboardPage() {
               ) : (
                 <>
                   {/* Overdue Tasks List */}
-                  {dashboardData?.overdueTasks && dashboardData.overdueTasks.length > 0 && (
+                  {filteredOverdueTasks && filteredOverdueTasks.length > 0 && (
                     <div className="space-y-3">
                       <div className="flex items-center gap-2 text-red-400 font-bold text-xs tracking-wide uppercase">
                         <AlertTriangle className="h-4 w-4 animate-bounce text-red-500" />
-                        <span>Urgent: Overdue Tasks ({dashboardData.overdueTasks.length})</span>
+                        <span>Urgent: Overdue Tasks ({filteredOverdueTasks.length})</span>
                       </div>
                       <div className="grid grid-cols-1 gap-3">
-                        {dashboardData.overdueTasks.map((task) => (
+                        {filteredOverdueTasks.map((task) => (
                           <Card key={task.id} className="p-4 border-red-950 bg-red-950/10 hover:bg-red-950/15 hover:border-red-900 transition-all duration-300 relative group overflow-hidden shadow-md shadow-red-950/20">
                             <div className="absolute top-0 right-0 w-24 h-24 bg-red-500/[0.02] blur-xl rounded-full pointer-events-none" />
                             <div className="flex items-start justify-between gap-4">
@@ -720,13 +1154,13 @@ export default function DashboardPage() {
                   )}
 
                   {/* Shared Accountability board */}
-                  {dashboardData?.sharedTasks && dashboardData.sharedTasks.length > 0 && (
+                  {filteredSharedTasks && filteredSharedTasks.length > 0 && (
                     <div className="space-y-3">
                       <h2 className="text-xs font-bold text-zinc-300 tracking-wide uppercase flex items-center gap-1.5">
                         <Award className="h-4 w-4 text-emerald-400" /> Shared Targets Board
                       </h2>
                       <div className="space-y-3">
-                        {dashboardData.sharedTasks.map((task) => {
+                        {filteredSharedTasks.map((task) => {
                           const isCreatorSelf = (task.creatorId as any)?._id?.toString() === user?.id || (task.creatorId as any)?.id === user?.id;
                           const partnerProfile = isCreatorSelf ? task.partnerId : task.creatorId;
                           const partnerLabel = (partnerProfile as any)?.name || `@${(partnerProfile as any)?.username || "partner"}`;
@@ -794,11 +1228,11 @@ export default function DashboardPage() {
                     <div className="flex items-center justify-between">
                       <h2 className="text-xs font-bold text-zinc-300 tracking-wide uppercase">All Active Space board</h2>
                       <Badge variant="secondary" className="px-2 py-0.5 text-[9px] font-semibold">
-                        {tasks.filter(t => t.status !== "COMPLETED").length} Remaining
+                        {filteredTasks.filter(t => t.status !== "COMPLETED").length} Remaining
                       </Badge>
                     </div>
 
-                    {tasks.length === 0 ? (
+                    {filteredTasks.length === 0 ? (
                       <div className="flex flex-col items-center justify-center p-12 text-center rounded-xl border border-zinc-900 bg-zinc-950/20">
                         <Clock className="h-10 w-10 text-zinc-700 mb-3" />
                         <p className="text-xs font-semibold text-zinc-400">No tasks currently tracked.</p>
@@ -809,7 +1243,7 @@ export default function DashboardPage() {
                       </div>
                     ) : (
                       <div className="space-y-3">
-                        {tasks.map((task) => (
+                        {filteredTasks.map((task) => (
                           <Card key={task.id} className="p-4 flex flex-col sm:flex-row justify-between sm:items-center gap-4 hover:border-zinc-800 transition-all duration-300 relative group overflow-hidden">
                             <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/[0.01] group-hover:bg-indigo-500/[0.02] blur-xl rounded-full transition-colors pointer-events-none" />
                             
@@ -1064,6 +1498,50 @@ export default function DashboardPage() {
                 />
               </div>
 
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
+                <div className="space-y-1.5 text-left">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400 block">Workspace</label>
+                  <select
+                    value={newTaskWorkspaceId}
+                    onChange={(e) => setNewTaskWorkspaceId(e.target.value)}
+                    className="flex w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600"
+                  >
+                    <option value="">Inbox (No Workspace)</option>
+                    {workspaces.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div 
+                  className="flex items-center gap-3 bg-zinc-950/30 border border-zinc-900 px-4 py-2 rounded-lg text-left self-end h-[38px] cursor-pointer" 
+                  onClick={() => setNewTaskIsPrivate(!newTaskIsPrivate)}
+                >
+                  <button
+                    type="button"
+                    className="text-zinc-400 hover:text-zinc-250 transition-colors focus:outline-none"
+                  >
+                    {newTaskIsPrivate ? (
+                      <Lock className="h-4 w-4 text-amber-500" />
+                    ) : (
+                      <Unlock className="h-4 w-4 text-zinc-500" />
+                    )}
+                  </button>
+                  <div className="flex flex-col">
+                    <span className="text-xs font-bold text-zinc-300">Private Task</span>
+                    <span className="text-[8px] text-zinc-500 leading-tight">Accountability partners won't be linked</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={newTaskIsPrivate}
+                    onChange={(e) => setNewTaskIsPrivate(e.target.checked)}
+                    className="ml-auto accent-indigo-500 rounded border-zinc-800"
+                  />
+                </div>
+              </div>
+
               <div className="flex justify-end gap-2 pt-2">
                 <Button type="button" variant="outline" onClick={() => setIsTaskModalOpen(false)} size="sm">
                   Cancel
@@ -1175,6 +1653,8 @@ export default function DashboardPage() {
         </div>
       ) : activeTab === "analytics" ? (
         renderAnalyticsTab()
+      ) : activeTab === "partners" ? (
+        renderPartnersTab()
       ) : (
         /* TAB: Profile tab */
         <div className="space-y-8 max-w-3xl mx-auto">

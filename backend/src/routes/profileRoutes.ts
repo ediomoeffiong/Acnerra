@@ -1,8 +1,13 @@
 import { Router } from 'express';
-import { getProfileByUsername, updateProfile, searchProfiles } from '../controllers/profileController';
+import { getProfileByUsername, updateProfile, searchProfiles, getPartners, addPartner, removePartner } from '../controllers/profileController';
 import { authMiddleware } from '../middleware/authMiddleware';
 
 const router = Router();
+
+// Protected routes for accountability partners
+router.get('/partners', authMiddleware, getPartners);
+router.post('/partners', authMiddleware, addPartner);
+router.delete('/partners/:partnerId', authMiddleware, removePartner);
 
 // Protected route to search profiles by username or email
 router.get('/', authMiddleware, searchProfiles);
