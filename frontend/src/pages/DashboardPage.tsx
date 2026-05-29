@@ -608,7 +608,7 @@ export default function DashboardPage() {
                     onChange={(e) => handlePartnerSearch(e.target.value)}
                     className="pl-8"
                   />
-                  <Search className="absolute left-2.5 top-9 h-4 w-4 text-zinc-500 pointer-events-none" />
+                  <Search className="absolute left-2.5 top-3 h-4 w-4 text-zinc-500 pointer-events-none" />
                 </div>
 
                 {/* Feedback Alerts */}

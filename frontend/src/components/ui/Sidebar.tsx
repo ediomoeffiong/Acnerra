@@ -1,5 +1,5 @@
 import * as React from "react";
-import { LayoutDashboard, Folder, BarChart3, Users, User, LogOut, X, Menu, ChevronLeft, ChevronRight } from "lucide-react";
+import { LayoutDashboard, Folder, BarChart3, Users, User, LogOut, X, Menu, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { cn } from "../../utils";
@@ -25,6 +25,37 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [isCollapsed, setIsCollapsed] = React.useState(() => {
     return localStorage.getItem("acnerra_sidebar_collapsed") === "true";
   });
+
+  const collapseTimeoutRef = React.useRef<any>(null);
+
+  const startCollapseTimer = React.useCallback(() => {
+    if (collapseTimeoutRef.current) clearTimeout(collapseTimeoutRef.current);
+    collapseTimeoutRef.current = setTimeout(() => {
+      setIsCollapsed(true);
+    }, 5700);
+  }, []);
+
+  const clearCollapseTimer = React.useCallback(() => {
+    if (collapseTimeoutRef.current) {
+      clearTimeout(collapseTimeoutRef.current);
+      collapseTimeoutRef.current = null;
+    }
+  }, []);
+
+  // Run auto-collapse timer on mount
+  React.useEffect(() => {
+    startCollapseTimer();
+    return () => clearCollapseTimer();
+  }, [startCollapseTimer, clearCollapseTimer]);
+
+  const handleMouseEnter = () => {
+    clearCollapseTimer();
+    setIsCollapsed(false);
+  };
+
+  const handleMouseLeave = () => {
+    startCollapseTimer();
+  };
 
   const toggleCollapse = () => {
     setIsCollapsed(prev => {
@@ -54,6 +85,8 @@ const Sidebar: React.FC<SidebarProps> = ({
  
       {/* Sidebar Container */}
       <aside
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
         className={cn(
           "fixed inset-y-0 left-0 z-45 flex flex-col border-r border-zinc-900 bg-zinc-950 py-6 transition-all duration-350 transform lg:static lg:translate-x-0",
           isCollapsed ? "w-20 px-3" : "w-64 px-4",
@@ -73,7 +106,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             className="hidden lg:flex rounded-lg p-1 text-zinc-550 hover:text-zinc-200 bg-zinc-950 border border-zinc-900 hover:border-zinc-800 transition-all focus:outline-none"
             title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
-            {isCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronLeft className="h-3.5 w-3.5" />}
+            {isCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
           </button>
           <button
             onClick={onClose}
