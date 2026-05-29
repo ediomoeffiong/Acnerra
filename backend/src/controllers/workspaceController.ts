@@ -38,13 +38,15 @@ export const getWorkspaces = async (req: any, res: Response) => {
       r.senderId.toString() === userId ? r.receiverId : r.senderId
     );
 
-    // Fetch workspaces for user + mutual partners
+    // Fetch workspaces for user + workspaces where they are added as collaborator
     const workspaces = await Workspace.find({
       $or: [
         { userId },
-        { userId: { $in: mutualPartnerIds } }
+        { collaboratorIds: userId }
       ]
-    }).populate('userId', 'id username name image').sort({ createdAt: 1 });
+    }).populate('userId', 'id username name image')
+      .populate('collaboratorIds', 'id username name image')
+      .sort({ createdAt: 1 });
 
     return res.status(200).json({ workspaces: workspaces.map(w => w.toJSON()) });
   } catch (error) {
@@ -64,9 +66,20 @@ export const createWorkspace = async (req: any, res: Response) => {
     return res.status(400).json({ message: "Workspace name is required." });
   }
 
+  const nameTrimmed = name.trim();
+
   try {
+    // Workspace name uniqueness check (case-insensitive per-user)
+    const duplicate = await Workspace.findOne({
+      userId: req.user.userId,
+      name: { $regex: new RegExp(`^${nameTrimmed.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') }
+    });
+    if (duplicate) {
+      return res.status(400).json({ message: "A workspace with this name already exists." });
+    }
+
     const workspace = await Workspace.create({
-      name: name.trim(),
+      name: nameTrimmed,
       userId: req.user.userId,
       isDefault: false
     });
@@ -94,6 +107,8 @@ export const updateWorkspace = async (req: any, res: Response) => {
     return res.status(400).json({ message: "Workspace name is required." });
   }
 
+  const nameTrimmed = name.trim();
+
   try {
     const workspace = await Workspace.findOne({ _id: id, userId: req.user.userId });
     
@@ -101,7 +116,17 @@ export const updateWorkspace = async (req: any, res: Response) => {
       return res.status(404).json({ message: "Workspace not found." });
     }
 
-    workspace.name = name.trim();
+    // Workspace name uniqueness check (case-insensitive per-user)
+    const duplicate = await Workspace.findOne({
+      _id: { $ne: id },
+      userId: req.user.userId,
+      name: { $regex: new RegExp(`^${nameTrimmed.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') }
+    });
+    if (duplicate) {
+      return res.status(400).json({ message: "A workspace with this name already exists." });
+    }
+
+    workspace.name = nameTrimmed;
     await workspace.save();
 
     return res.status(200).json({
@@ -171,5 +196,32 @@ export const restoreDefaultWorkspaces = async (req: any, res: Response) => {
   } catch (error) {
     console.error("Restore default workspaces error:", error);
     return res.status(500).json({ message: "An error occurred while restoring default workspaces." });
+  }
+};
+
+// Remove partner collaborator from workspace
+export const removePartnerFromWorkspace = async (req: any, res: Response) => {
+  if (!req.user) {
+    return res.status(401).json({ message: "Not authenticated" });
+  }
+  const { id, partnerId } = req.params;
+  try {
+    const workspace = await Workspace.findOne({ _id: id, userId: req.user.userId });
+    if (!workspace) {
+      return res.status(404).json({ message: "Workspace not found." });
+    }
+
+    workspace.collaboratorIds = (workspace.collaboratorIds || []).filter(
+      cid => cid.toString() !== partnerId
+    );
+    await workspace.save();
+
+    return res.status(200).json({
+      message: "Partner removed from workspace successfully.",
+      workspace: workspace.toJSON()
+    });
+  } catch (error) {
+    console.error("Remove partner from workspace error:", error);
+    return res.status(500).json({ message: "An error occurred while removing partner from workspace." });
   }
 };

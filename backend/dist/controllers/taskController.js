@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getDashboardData = exports.deleteTask = exports.updateTask = exports.getTaskById = exports.getTasks = exports.createTask = void 0;
+exports.removeCollaboratorFromTask = exports.getDashboardData = exports.deleteTask = exports.updateTask = exports.getTaskById = exports.getTasks = exports.createTask = void 0;
 const zod_1 = require("zod");
 const Task_1 = require("../models/Task");
 const CheckIn_1 = require("../models/CheckIn");
@@ -75,6 +75,20 @@ const createTask = async (req, res) => {
             return res.status(400).json({
                 message: "Create the task first, then invite collaborators by username.",
             });
+        }
+        // Active Task Title Uniqueness Check (case-insensitive per-user)
+        if (status !== Task_1.TaskStatus.COMPLETED) {
+            const titleTrimmed = title.trim();
+            const duplicate = await Task_1.Task.findOne({
+                creatorId,
+                status: { $ne: Task_1.TaskStatus.COMPLETED },
+                title: { $regex: new RegExp(`^${titleTrimmed.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') }
+            });
+            if (duplicate) {
+                return res.status(400).json({
+                    message: "An active task with this title already exists. Please complete or rename it."
+                });
+            }
         }
         let partnerIdToSet = null;
         let collaboratorIdsToSet = [];
@@ -228,8 +242,32 @@ const updateTask = async (req, res) => {
         }
         // Apply updates
         const updates = validatedFields.data;
+        // Strict Creator Completion Check
+        if (updates.status !== undefined && updates.status === Task_1.TaskStatus.COMPLETED) {
+            if (task.creatorId.toString() !== req.user.userId) {
+                return res.status(403).json({
+                    message: "Only the task creator can mark this task as completed."
+                });
+            }
+        }
+        // Active Task Title Uniqueness Check (case-insensitive per-user)
+        const nextStatus = updates.status !== undefined ? updates.status : task.status;
+        const nextTitle = updates.title !== undefined ? updates.title.trim() : task.title;
+        if (nextStatus !== Task_1.TaskStatus.COMPLETED) {
+            const duplicate = await Task_1.Task.findOne({
+                _id: { $ne: id },
+                creatorId: task.creatorId,
+                status: { $ne: Task_1.TaskStatus.COMPLETED },
+                title: { $regex: new RegExp(`^${nextTitle.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') }
+            });
+            if (duplicate) {
+                return res.status(400).json({
+                    message: "An active task with this title already exists. Please complete or rename it."
+                });
+            }
+        }
         if (updates.title !== undefined)
-            task.title = updates.title;
+            task.title = updates.title.trim();
         if (updates.description !== undefined)
             task.description = updates.description;
         if (updates.status !== undefined)
@@ -499,3 +537,32 @@ const getDashboardData = async (req, res) => {
     }
 };
 exports.getDashboardData = getDashboardData;
+// Remove collaborator from task
+const removeCollaboratorFromTask = async (req, res) => {
+    if (!req.user)
+        return res.status(401).json({ message: 'Not authenticated' });
+    const { id, partnerId } = req.params;
+    try {
+        const task = await Task_1.Task.findById(id);
+        if (!task)
+            return res.status(404).json({ message: 'Task not found.' });
+        // Permitted if current user is either creator or the partner themselves
+        const isCreator = task.creatorId.toString() === req.user.userId;
+        const isSelfPartner = partnerId === req.user.userId;
+        if (!isCreator && !isSelfPartner) {
+            return res.status(403).json({ message: 'You do not have permission to remove this collaborator.' });
+        }
+        // Pull from collaboratorIds
+        task.collaboratorIds = (task.collaboratorIds || []).filter(cid => cid.toString() !== partnerId);
+        if (task.partnerId && task.partnerId.toString() === partnerId) {
+            task.partnerId = null;
+        }
+        await task.save();
+        return res.status(200).json({ message: 'Collaborator removed from task successfully.' });
+    }
+    catch (error) {
+        console.error('Remove collaborator from task error:', error);
+        return res.status(500).json({ message: 'An error occurred while removing the collaborator from the task.' });
+    }
+};
+exports.removeCollaboratorFromTask = removeCollaboratorFromTask;

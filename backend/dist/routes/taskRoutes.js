@@ -15,4 +15,5 @@ router.get('/dashboard', taskController_1.getDashboardData);
 router.get('/:id', (0, validateObjectId_1.validateObjectId)('id'), taskController_1.getTaskById);
 router.put('/:id', (0, validateObjectId_1.validateObjectId)('id'), taskController_1.updateTask);
 router.delete('/:id', (0, validateObjectId_1.validateObjectId)('id'), taskController_1.deleteTask);
+router.delete('/:id/partners/:partnerId', (0, validateObjectId_1.validateObjectId)('id'), (0, validateObjectId_1.validateObjectId)('partnerId'), taskController_1.removeCollaboratorFromTask);
 exports.default = router;

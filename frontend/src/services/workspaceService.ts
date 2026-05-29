@@ -3,8 +3,9 @@ import api from './api';
 export interface Workspace {
   id: string;
   name: string;
-  userId: string;
+  userId: any;
   isDefault: boolean;
+  collaboratorIds?: any[];
   createdAt: string;
   updatedAt: string;
 }
@@ -32,5 +33,10 @@ export const workspaceService = {
   restoreDefaultWorkspaces: async (): Promise<Workspace[]> => {
     const response = await api.post('/workspaces/restore');
     return response.data.workspaces;
+  },
+
+  removePartnerFromWorkspace: async (id: string, partnerId: string): Promise<Workspace> => {
+    const response = await api.delete(`/workspaces/${id}/partners/${partnerId}`);
+    return response.data.workspace;
   }
 };

@@ -115,4 +115,9 @@ export const taskService = {
     const response = await api.delete(`/tasks/${id}`);
     return response.data;
   },
+
+  // Remove collaborator from task
+  removeCollaboratorFromTask: async (id: string, partnerId: string): Promise<void> => {
+    await api.delete(`/tasks/${id}/partners/${partnerId}`);
+  }
 };

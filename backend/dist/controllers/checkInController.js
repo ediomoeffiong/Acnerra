@@ -45,6 +45,11 @@ const createCheckIn = async (req, res) => {
         if (!(0, taskAccess_1.canAccessTask)(task, req.user.userId)) {
             return res.status(403).json({ message: 'Only task collaborators can submit check-ins.' });
         }
+        if (parsed.data.status === CheckIn_1.CheckInStatus.COMPLETED) {
+            if (task.creatorId.toString() !== req.user.userId) {
+                return res.status(403).json({ message: 'Only the creator of the task can verify it as completed.' });
+            }
+        }
         const checkIn = await CheckIn_1.CheckIn.create({
             taskId: task._id,
             userId: req.user.userId,

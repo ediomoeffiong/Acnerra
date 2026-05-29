@@ -9,4 +9,5 @@ router.post('/', authMiddleware_1.authMiddleware, workspaceController_1.createWo
 router.post('/restore', authMiddleware_1.authMiddleware, workspaceController_1.restoreDefaultWorkspaces);
 router.put('/:id', authMiddleware_1.authMiddleware, workspaceController_1.updateWorkspace);
 router.delete('/:id', authMiddleware_1.authMiddleware, workspaceController_1.deleteWorkspace);
+router.delete('/:id/partners/:partnerId', authMiddleware_1.authMiddleware, workspaceController_1.removePartnerFromWorkspace);
 exports.default = router;

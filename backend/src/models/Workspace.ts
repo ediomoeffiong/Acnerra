@@ -3,7 +3,8 @@ import { Schema, model } from 'mongoose';
 const WorkspaceSchema = new Schema({
   name: { type: String, required: true, trim: true },
   userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-  isDefault: { type: Boolean, default: false }
+  isDefault: { type: Boolean, default: false },
+  collaboratorIds: [{ type: Schema.Types.ObjectId, ref: 'User' }]
 }, { timestamps: true });
 
 // Convert _id to id for frontend compatibility
@@ -23,5 +24,6 @@ WorkspaceSchema.set('toJSON', {
 
 // Index for query speed
 WorkspaceSchema.index({ userId: 1 });
+WorkspaceSchema.index({ collaboratorIds: 1 });
 
 export const Workspace = model('Workspace', WorkspaceSchema);

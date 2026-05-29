@@ -164,6 +164,19 @@ export default function DashboardPage() {
     return () => clearTimeout(delayDebounce);
   }, [buddySearchQuery]);
 
+  // Reset check-in status to IN_PROGRESS if a partner's task is selected and status is COMPLETED
+  React.useEffect(() => {
+    if (checkInTaskId) {
+      const selectedTask = (dashboardData?.sharedTasks || []).find(t => t.id === checkInTaskId) || tasks.find(t => t.id === checkInTaskId);
+      if (selectedTask) {
+        const isCreator = (selectedTask.creatorId as any)?.id === user?.id || selectedTask.creatorId === user?.id;
+        if (!isCreator && checkInStatus === "COMPLETED") {
+          setCheckInStatus("IN_PROGRESS");
+        }
+      }
+    }
+  }, [checkInTaskId, dashboardData?.sharedTasks, tasks, checkInStatus, user?.id]);
+
   const buddies = React.useMemo<Buddy[]>(() => {
     const partnerMap = new Map<string, Buddy>();
     
@@ -754,6 +767,34 @@ export default function DashboardPage() {
                       const partner = (relation.senderId.id === user?.id || relation.senderId === user?.id) ? relation.receiverId : relation.senderId;
                       const isMutual = relation.mode === "MUTUAL";
                       
+                      // Calculate shared workspaces
+                      const sharedWorkspaces = workspaces.filter(w => {
+                        const wUserId = typeof w.userId === 'string' ? w.userId : w.userId?.id;
+                        const isOwner = wUserId === user?.id;
+                        const isPartnerOwner = wUserId === partner.id;
+                        const isPartnerInCollaborators = (w.collaboratorIds || []).some((cid: any) => cid.id === partner.id || cid === partner.id);
+                        const isUserInCollaborators = (w.collaboratorIds || []).some((cid: any) => cid.id === user?.id || cid === user?.id);
+                        return (isOwner && isPartnerInCollaborators) || (isPartnerOwner && isUserInCollaborators);
+                      });
+
+                      // Calculate shared tasks
+                      const sharedTasks = [
+                        ...tasks,
+                        ...(dashboardData?.sharedTasks || [])
+                      ].filter((t, idx, self) => 
+                        self.findIndex(x => x.id === t.id) === idx
+                      ).filter(t => {
+                        const tCreatorId = typeof t.creatorId === 'string' ? t.creatorId : t.creatorId?.id;
+                        const isOwner = tCreatorId === user?.id;
+                        const isPartnerOwner = tCreatorId === partner.id;
+
+                        const tPartnerIdStr = typeof t.partnerId === 'string' ? t.partnerId : t.partnerId?.id;
+                        const isPartnerCollaborator = (t.collaboratorIds || []).some(cid => cid.id === partner.id) || tPartnerIdStr === partner.id;
+                        const isUserCollaborator = (t.collaboratorIds || []).some(cid => cid.id === user?.id) || tPartnerIdStr === user?.id;
+
+                        return (isOwner && isPartnerCollaborator) || (isPartnerOwner && isUserCollaborator);
+                      });
+
                       return (
                         <Card key={relation.id} className="p-4 flex flex-col justify-between border-zinc-900 bg-zinc-950/30 relative group overflow-hidden hover:border-zinc-800 transition-all duration-350">
                           <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/[0.01] blur-xl rounded-full pointer-events-none" />
@@ -776,10 +817,94 @@ export default function DashboardPage() {
                             </Badge>
                           </div>
 
-                          <div className="text-[9px] text-zinc-500 mt-3 bg-zinc-950/20 p-2 rounded border border-zinc-900/40">
+                          <div className="text-[9px] text-zinc-500 mt-3 bg-zinc-950/20 p-2 rounded border border-zinc-900/40 text-left">
                             {isMutual 
                               ? "✓ You monitor each other & share workspaces"
                               : `✓ ${partner.username} monitors your tasks`}
+                          </div>
+
+                          {/* Shared Workspaces */}
+                          <div className="mt-3.5 space-y-2 text-left">
+                            <span className="text-[10px] font-bold text-zinc-550 uppercase tracking-wider block">Shared Workspaces</span>
+                            {sharedWorkspaces.length === 0 ? (
+                              <p className="text-[9px] text-zinc-650 italic pl-1">No shared workspaces.</p>
+                            ) : (
+                              <div className="flex flex-wrap gap-1.5 pl-1">
+                                {sharedWorkspaces.map(w => {
+                                  const isOwner = (w.userId as any)?.id === user?.id || w.userId === user?.id;
+                                  return (
+                                    <div key={w.id} className="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-950/40 border border-zinc-900 text-[9px] text-zinc-300 font-semibold">
+                                      <span>{w.name}</span>
+                                      <button
+                                        type="button"
+                                        onClick={async () => {
+                                          const msg = isOwner 
+                                            ? `Remove @${partner.username} from workspace "${w.name}"?` 
+                                            : `Leave workspace "${w.name}" owned by @${partner.username}?`;
+                                          if (confirm(msg)) {
+                                            try {
+                                              const targetUserId = isOwner ? partner.id : user?.id;
+                                              if (targetUserId) {
+                                                await workspaceService.removePartnerFromWorkspace(w.id, targetUserId);
+                                                await loadDashboardData();
+                                              }
+                                            } catch (err) {
+                                              console.error("Failed to remove partner from workspace:", err);
+                                            }
+                                          }
+                                        }}
+                                        className="text-red-400 hover:text-red-300 font-bold pl-1 ml-1 border-l border-zinc-850 focus:outline-none"
+                                        title="Remove link"
+                                      >
+                                        ×
+                                      </button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Shared Tasks */}
+                          <div className="mt-3 space-y-2 text-left">
+                            <span className="text-[10px] font-bold text-zinc-550 uppercase tracking-wider block">Shared Tasks</span>
+                            {sharedTasks.length === 0 ? (
+                              <p className="text-[9px] text-zinc-650 italic pl-1">No shared tasks.</p>
+                            ) : (
+                              <div className="space-y-1 pl-1 max-h-36 overflow-y-auto pr-1">
+                                {sharedTasks.map(t => {
+                                  const isOwner = (t.creatorId as any)?.id === user?.id || t.creatorId === user?.id;
+                                  return (
+                                    <div key={t.id} className="flex items-center justify-between p-1.5 rounded bg-zinc-950/40 border border-zinc-900/60 hover:border-zinc-800 transition-all gap-2 text-[9px]">
+                                      <span className="text-zinc-350 font-semibold truncate flex-1">{t.title}</span>
+                                      <button
+                                        type="button"
+                                        onClick={async () => {
+                                          const msg = isOwner 
+                                            ? `Remove @${partner.username} from task "${t.title}"?` 
+                                            : `Remove yourself from task "${t.title}" created by @${(t.creatorId as any)?.username || 'partner'}?`;
+                                          if (confirm(msg)) {
+                                            try {
+                                              const targetUserId = isOwner ? partner.id : user?.id;
+                                              if (targetUserId) {
+                                                await taskService.removeCollaboratorFromTask(t.id, targetUserId);
+                                                await loadDashboardData();
+                                              }
+                                            } catch (err) {
+                                              console.error("Failed to remove collaborator from task:", err);
+                                            }
+                                          }
+                                        }}
+                                        className="text-red-400 hover:text-red-300 font-bold focus:outline-none px-1 rounded hover:bg-red-950/20"
+                                        title="Remove link"
+                                      >
+                                        Remove
+                                      </button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
 
                           <div className="flex items-center justify-between border-t border-zinc-900/60 pt-3 mt-4">
@@ -788,7 +913,7 @@ export default function DashboardPage() {
                               onClick={() => handleRemoveAccountabilityPartner(relation.id)}
                               className="text-[10px] text-red-400 hover:text-red-300 font-semibold flex items-center gap-0.5 focus:outline-none transition-colors"
                             >
-                              <Trash2 className="h-3 w-3" /> Remove
+                              <Trash2 className="h-3 w-3" /> Remove Partner
                             </button>
                           </div>
                         </Card>
@@ -1237,6 +1362,45 @@ export default function DashboardPage() {
                       )}
                     </div>
                   </div>
+
+                  {/* Partners added to this workspace */}
+                  {w.collaboratorIds && w.collaboratorIds.length > 0 && (
+                    <div className="pt-2.5 border-t border-zinc-900/40 text-left">
+                      <span className="text-[10px] font-bold text-zinc-550 uppercase tracking-wider block mb-1.5">
+                        Assigned Partners
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {w.collaboratorIds.map((partner: any) => (
+                          <div 
+                            key={partner.id} 
+                            className="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-900/60 border border-zinc-900 text-[10px] text-zinc-300 font-semibold"
+                          >
+                            <span>@{partner.username}</span>
+                            {isMyWorkspace && (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  if (confirm(`Remove @${partner.username} from this workspace?`)) {
+                                    try {
+                                      await workspaceService.removePartnerFromWorkspace(w.id, partner.id);
+                                      const workspacesList = await workspaceService.getWorkspaces();
+                                      setWorkspaces(workspacesList);
+                                    } catch (err) {
+                                      console.error("Failed to remove partner from workspace:", err);
+                                    }
+                                  }
+                                }}
+                                className="text-red-400 hover:text-red-300 font-bold shrink-0 pl-1 ml-1 border-l border-zinc-800 focus:outline-none"
+                                title="Remove partner"
+                              >
+                                ×
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Tasks List */}
                   <div className="space-y-2 pt-3 border-t border-zinc-900/50">
@@ -1861,15 +2025,23 @@ export default function DashboardPage() {
                         <option key={task.id} value={task.id}>{task.title}</option>
                       ))}
                     </select>
-                    <select
-                      value={checkInStatus}
-                      onChange={(e) => setCheckInStatus(e.target.value as CheckInStatus)}
-                      className="flex w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-600"
-                    >
-                      <option value="COMPLETED">Completed</option>
-                      <option value="IN_PROGRESS">In Progress</option>
-                      <option value="MISSED">Missed</option>
-                    </select>
+                    {(() => {
+                      const selectedTask = (dashboardData?.sharedTasks || []).find(t => t.id === checkInTaskId) || tasks.find(t => t.id === checkInTaskId);
+                      const isCreator = selectedTask 
+                        ? ((selectedTask.creatorId as any)?.id === user?.id || selectedTask.creatorId === user?.id)
+                        : true;
+                      return (
+                        <select
+                          value={checkInStatus}
+                          onChange={(e) => setCheckInStatus(e.target.value as CheckInStatus)}
+                          className="flex w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 focus:outline-none focus:ring-1 focus:ring-zinc-600"
+                        >
+                          {isCreator && <option value="COMPLETED">Completed</option>}
+                          <option value="IN_PROGRESS">In Progress</option>
+                          <option value="MISSED">Missed</option>
+                        </select>
+                      );
+                    })()}
                     <textarea
                       value={checkInNotes}
                       onChange={(e) => setCheckInNotes(e.target.value)}

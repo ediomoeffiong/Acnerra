@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createTask, getTasks, getTaskById, updateTask, deleteTask, getDashboardData } from '../controllers/taskController';
+import { createTask, getTasks, getTaskById, updateTask, deleteTask, getDashboardData, removeCollaboratorFromTask } from '../controllers/taskController';
 import { authMiddleware } from '../middleware/authMiddleware';
 import { validateObjectId } from '../middleware/validateObjectId';
 
@@ -17,5 +17,6 @@ router.get('/dashboard', getDashboardData);
 router.get('/:id', validateObjectId('id'), getTaskById);
 router.put('/:id', validateObjectId('id'), updateTask);
 router.delete('/:id', validateObjectId('id'), deleteTask);
+router.delete('/:id/partners/:partnerId', validateObjectId('id'), validateObjectId('partnerId'), removeCollaboratorFromTask);
 
 export default router;
