@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { AppLayout } from "../components/layouts/AppLayout";
 import { Button } from "../components/ui/Button";
@@ -11,7 +11,7 @@ import { Skeleton } from "../components/ui/Skeleton";
 import { 
   Plus, CheckCircle2, Circle, Clock, Trash2, UserPlus, 
   ArrowUpCircle, Flame, Calendar, Award, ExternalLink,
-  AlertTriangle, Bell
+  AlertTriangle, Bell, BarChart3
 } from "lucide-react";
 import { taskService } from "../services/taskService";
 import type { Task, DashboardData } from "../services/taskService";
@@ -35,7 +35,18 @@ interface Buddy {
 export default function DashboardPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = React.useState("dashboard");
+  const location = useLocation();
+  const [activeTab, setActiveTab] = React.useState(() => {
+    return (location.state as any)?.activeTab || "dashboard";
+  });
+
+  React.useEffect(() => {
+    if (location.state && (location.state as any).activeTab) {
+      setActiveTab((location.state as any).activeTab);
+    }
+  }, [location.state]);
+
+  const [analyticsRange, setAnalyticsRange] = React.useState<"weekly" | "monthly">("weekly");
 
   // State loaded from API
   const [tasks, setTasks] = React.useState<Task[]>([]);
@@ -76,7 +87,6 @@ export default function DashboardPage() {
   const [editBioText, setEditBioText] = React.useState(profileBio);
 
   // Load Dashboard Data & Tasks
-  // Load Dashboard Data & Tasks
   const loadDashboardData = React.useCallback(async (background = false) => {
     try {
       if (!background) setLoadingDashboard(true);
@@ -85,7 +95,7 @@ export default function DashboardPage() {
       setTasks(data.allTasks || []);
       const [inviteList, analyticsData] = await Promise.all([
         inviteService.listInvites(),
-        analyticsService.getAnalytics("weekly"),
+        analyticsService.getAnalytics(analyticsRange),
       ]);
       setInvites(inviteList);
       setAnalytics(analyticsData);
@@ -94,7 +104,7 @@ export default function DashboardPage() {
     } finally {
       if (!background) setLoadingDashboard(false);
     }
-  }, []);
+  }, [analyticsRange]);
 
   React.useEffect(() => {
     loadDashboardData();
@@ -104,7 +114,7 @@ export default function DashboardPage() {
     }, 5000);
     
     return () => clearInterval(interval);
-  }, [loadDashboardData]);
+  }, [loadDashboardData, analyticsRange]);
 
   // Debounced search for profiles
   React.useEffect(() => {
@@ -164,9 +174,27 @@ export default function DashboardPage() {
   }, [dashboardData?.sharedTasks, invites, user?.id]);
 
   // Actions
+  const getMinDateTimeString = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  };
+
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTaskTitle.trim()) return;
+
+    if (newTaskDueDate) {
+      const selected = new Date(newTaskDueDate);
+      if (selected <= new Date()) {
+        alert("Target due date must be in the future!");
+        return;
+      }
+    }
 
     try {
       await taskService.createTask({
@@ -285,6 +313,8 @@ export default function DashboardPage() {
   const formatDeadline = (dueDate: string | null) => {
     if (!dueDate) return "No target date";
     const now = new Date();
+    const timeStr = new Date(dueDate).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    
     now.setHours(0, 0, 0, 0);
     const due = new Date(dueDate);
     due.setHours(0, 0, 0, 0);
@@ -294,14 +324,187 @@ export default function DashboardPage() {
     if (diffDays < 0) {
       return `Overdue by ${Math.abs(diffDays)} day${Math.abs(diffDays) > 1 ? 's' : ''}`;
     } else if (diffDays === 0) {
-      return "Due Today";
+      return `Due Today at ${timeStr}`;
     } else if (diffDays === 1) {
-      return "Due Tomorrow";
+      return `Due Tomorrow at ${timeStr}`;
     } else if (diffDays <= 7) {
-      return `Due in ${diffDays} days`;
+      return `Due in ${diffDays} days (${timeStr})`;
     } else {
-      return `Due on ${due.toLocaleDateString()}`;
+      return `Due on ${new Date(dueDate).toLocaleDateString()} at ${timeStr}`;
     }
+  };
+
+  // TAB: Analytics tab render
+  const renderAnalyticsTab = () => {
+    if (!analytics) return (
+      <div className="space-y-4 text-left">
+        <Skeleton className="h-10 w-48" />
+        <Skeleton className="h-32 w-full" />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Skeleton className="h-64 w-full" />
+          <Skeleton className="h-64 w-full" />
+        </div>
+      </div>
+    );
+
+    const metrics = analytics.metrics;
+    
+    // Sort activity by day to display chronologically in the chart
+    const chartData = Object.entries(analytics.activityByDay || {})
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .slice(-7); // Last 7 entries
+
+    const maxActivityCount = chartData.length > 0 ? Math.max(...chartData.map(d => d[1]), 1) : 1;
+
+    return (
+      <div className="space-y-8 animate-fade-in text-left">
+        {/* Header and Toggle Controls */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-zinc-50 tracking-tight">Performance Analytics</h1>
+            <p className="text-sm text-zinc-400 mt-1">
+              Analyze your accountability patterns and milestones velocity.
+            </p>
+          </div>
+          <div className="flex border border-zinc-900 bg-zinc-950/80 p-1 rounded-lg shrink-0">
+            <button
+              onClick={() => setAnalyticsRange("weekly")}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${analyticsRange === "weekly" ? "bg-zinc-900 text-zinc-550 shadow-sm border border-zinc-800" : "text-zinc-550 hover:text-zinc-300"}`}
+            >
+              Weekly
+            </button>
+            <button
+              onClick={() => setAnalyticsRange("monthly")}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${analyticsRange === "monthly" ? "bg-zinc-900 text-zinc-550 shadow-sm border border-zinc-800" : "text-zinc-550 hover:text-zinc-300"}`}
+            >
+              Monthly
+            </button>
+          </div>
+        </div>
+
+        {/* Stats Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <Card className="p-5 bg-zinc-950/40 border-zinc-900">
+            <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block">Task Completion Velocity</span>
+            <div className="flex items-baseline gap-1 mt-2.5">
+              <span className="text-3xl font-extrabold text-zinc-100">{metrics.completionRate}%</span>
+              <span className="text-xs text-zinc-500 font-semibold">rate</span>
+            </div>
+            <p className="text-[10px] text-zinc-500 mt-2">{metrics.completedTasks} of {metrics.totalTasks} targets checked off</p>
+          </Card>
+
+          <Card className="p-5 bg-zinc-950/40 border-zinc-900">
+            <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block">Check-in Consistency</span>
+            <div className="flex items-baseline gap-1 mt-2.5">
+              <span className="text-3xl font-extrabold text-indigo-400">{metrics.checkInConsistency}%</span>
+              <span className="text-xs text-zinc-500 font-semibold">score</span>
+            </div>
+            <p className="text-[10px] text-zinc-500 mt-2">Based on {metrics.totalCheckIns} submitted updates</p>
+          </Card>
+
+          <Card className="p-5 bg-zinc-950/40 border-zinc-900">
+            <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block">Average Activity Count</span>
+            <div className="flex items-baseline gap-1 mt-2.5">
+              <span className="text-3xl font-extrabold text-purple-400">{metrics.activityFrequency}</span>
+              <span className="text-xs text-zinc-500 font-semibold">triggers</span>
+            </div>
+            <p className="text-[10px] text-zinc-500 mt-2">Active check-ins in selected period</p>
+          </Card>
+
+          <Card className="p-5 bg-zinc-950/40 border-zinc-900">
+            <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block">Consistency Rank</span>
+            <div className="flex items-baseline gap-1 mt-2.5">
+              <span className="text-lg font-bold text-emerald-400">{metrics.completionRate >= 80 ? "Elite Partner" : metrics.completionRate >= 50 ? "Active Partner" : "Growing Partner"}</span>
+            </div>
+            <p className="text-[10px] text-zinc-500 mt-3">Recalculates based on target velocity</p>
+          </Card>
+        </div>
+
+        {/* Chart and Details Split Section */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Chart Display */}
+          <Card className="lg:col-span-2 p-6 border-zinc-900 bg-zinc-950/40 flex flex-col space-y-6">
+            <div>
+              <h3 className="text-sm font-bold uppercase tracking-wide text-zinc-200">Activity Distribution</h3>
+              <p className="text-[11px] text-zinc-550 mt-1">Daily frequency of verification updates over recent active dates.</p>
+            </div>
+            {chartData.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center py-12 text-center border border-dashed border-zinc-900 rounded-xl">
+                <BarChart3 className="h-8 w-8 text-zinc-700 mb-2" />
+                <p className="text-xs text-zinc-550 italic">No activity recorded for this period.</p>
+              </div>
+            ) : (
+              <div className="h-64 flex items-end justify-between gap-4 pt-4 px-2">
+                {chartData.map(([dayStr, count]) => {
+                  const dayName = new Date(dayStr).toLocaleDateString(undefined, { weekday: 'short', month: 'numeric', day: 'numeric' });
+                  const pct = Math.max((count / maxActivityCount) * 100, 8); // Minimum height for visibility
+                  return (
+                    <div key={dayStr} className="flex-1 flex flex-col items-center gap-2 group cursor-default">
+                      <div className="relative w-full flex justify-center">
+                        {/* Tooltip on Hover */}
+                        <div className="absolute bottom-full mb-2 bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-200 px-2 py-1 rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-10 font-bold">
+                          {count} check-in{count > 1 ? 's' : ''}
+                        </div>
+                        {/* CSS Bar */}
+                        <div
+                          className="w-8 sm:w-12 rounded-t-lg bg-gradient-to-t from-indigo-900/60 to-indigo-500/80 group-hover:to-cyan-400/90 transition-all duration-300"
+                          style={{ height: `${pct}%`, minHeight: '12px' }}
+                        />
+                      </div>
+                      <span className="text-[9px] font-bold text-zinc-555 group-hover:text-zinc-300 transition-colors mt-1 select-none">{dayName}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+
+          {/* Outcomes Breakdown */}
+          <Card className="p-6 border-zinc-900 bg-zinc-950/40 space-y-6">
+            <div>
+              <h3 className="text-sm font-bold uppercase tracking-wide text-zinc-200">Outcome Distribution</h3>
+              <p className="text-[11px] text-zinc-550 mt-1">Breakdown of active checkpoints by state.</p>
+            </div>
+            
+            <div className="space-y-4 pt-2">
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-xs font-semibold text-zinc-300">
+                  <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" /> Completed</span>
+                  <span>{metrics.completedCheckIns} ({metrics.totalCheckIns ? Math.round((metrics.completedCheckIns / metrics.totalCheckIns) * 100) : 0}%)</span>
+                </div>
+                <div className="h-2 w-full bg-zinc-900 rounded-full overflow-hidden">
+                  <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${metrics.totalCheckIns ? (metrics.completedCheckIns / metrics.totalCheckIns) * 100 : 0}%` }} />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-xs font-semibold text-zinc-300">
+                  <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-amber-500" /> In Progress</span>
+                  <span>{metrics.inProgressCheckIns} ({metrics.totalCheckIns ? Math.round((metrics.inProgressCheckIns / metrics.totalCheckIns) * 100) : 0}%)</span>
+                </div>
+                <div className="h-2 w-full bg-zinc-900 rounded-full overflow-hidden">
+                  <div className="h-full bg-amber-500 rounded-full" style={{ width: `${metrics.totalCheckIns ? (metrics.inProgressCheckIns / metrics.totalCheckIns) * 100 : 0}%` }} />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-xs font-semibold text-zinc-300">
+                  <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-red-500" /> Missed</span>
+                  <span>{metrics.missedCheckIns} ({metrics.totalCheckIns ? Math.round((metrics.missedCheckIns / metrics.totalCheckIns) * 100) : 0}%)</span>
+                </div>
+                <div className="h-2 w-full bg-zinc-900 rounded-full overflow-hidden">
+                  <div className="h-full bg-red-500 rounded-full" style={{ width: `${metrics.totalCheckIns ? (metrics.missedCheckIns / metrics.totalCheckIns) * 100 : 0}%` }} />
+                </div>
+              </div>
+            </div>
+            
+            <div className="pt-2 border-t border-zinc-900 text-[10px] text-zinc-500 leading-relaxed font-semibold">
+              Consistency is key. Maintaining a missed score below 15% is recommended to protect your streak score.
+            </div>
+          </Card>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -443,7 +646,7 @@ export default function DashboardPage() {
                                   <p className="text-xs text-red-400/90 mt-1 max-w-lg leading-relaxed text-left">{task.description}</p>
                                   <div className="flex items-center gap-3 mt-2.5 text-[10px] text-red-400/70 font-semibold flex-wrap">
                                     <span className="flex items-center gap-1">
-                                      <Calendar className="h-3.5 w-3.5" /> Overdue since {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : ""}
+                                      <Calendar className="h-3.5 w-3.5" /> Overdue since {task.dueDate ? new Date(task.dueDate).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ""}
                                     </span>
                                     {task.partnerId && (
                                       <span className="bg-red-950/30 text-red-300 px-1.5 py-0.5 rounded border border-red-900/30">
@@ -642,7 +845,7 @@ export default function DashboardPage() {
                                 
                                 <div className="flex items-center gap-4 mt-2.5 text-[10px] text-zinc-500 flex-wrap">
                                   <span className="flex items-center gap-1">
-                                    <Calendar className="h-3.5 w-3.5" /> Due {task.dueDate ? new Date(task.dueDate).toLocaleDateString() : "No target date"}
+                                    <Calendar className="h-3.5 w-3.5" /> Due {task.dueDate ? new Date(task.dueDate).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : "No target date"}
                                   </span>
                                   <button
                                     onClick={() => navigate(`/tasks/${task.id}`)}
@@ -853,8 +1056,9 @@ export default function DashboardPage() {
                 </div>
                 <Input
                   id="taskDueDate"
-                  label="Target Date"
-                  type="date"
+                  label="Target Date and Time"
+                  type="datetime-local"
+                  min={getMinDateTimeString()}
                   value={newTaskDueDate}
                   onChange={(e) => setNewTaskDueDate(e.target.value)}
                 />
@@ -928,7 +1132,14 @@ export default function DashboardPage() {
                       const sameTask = (invite.taskId as any).id === inviteTaskId || (invite.taskId as any)._id === inviteTaskId;
                       return sameUser && sameTask && ["PENDING", "ACCEPTED"].includes(invite.status);
                     });
-                    const isAlreadyBuddy = buddies.some(b => b.id === profile.id && b.status === "active");
+                    
+                    const selectedTask = tasks.find((t) => t.id === inviteTaskId);
+                    const isAlreadyCollaboratorOnTask = selectedTask ? (
+                      ((selectedTask.creatorId as any)?.id || (selectedTask.creatorId as any)?._id) === profile.id ||
+                      ((selectedTask.partnerId as any)?.id || (selectedTask.partnerId as any)?._id) === profile.id ||
+                      (selectedTask.collaboratorIds as any[] || []).some((c: any) => (c?.id || c?._id || c) === profile.id)
+                    ) : false;
+
                     return (
                       <div key={profile.id} className="flex items-center justify-between gap-3 border-b border-zinc-900/60 pb-2.5 last:border-0 last:pb-0">
                         <div className="flex items-center gap-2">
@@ -943,11 +1154,11 @@ export default function DashboardPage() {
                         <Button
                           type="button"
                           size="sm"
-                          disabled={submittingInvite || isAlreadyBuddy || !!existingInvite}
+                          disabled={submittingInvite || !inviteTaskId || isAlreadyCollaboratorOnTask || !!existingInvite}
                           onClick={() => handleSendInvite(profile)}
                           className="h-7 text-[10px] px-3 font-semibold"
                         >
-                          {isAlreadyBuddy ? "Collaborator" : existingInvite ? existingInvite.status.toLowerCase() : "Send Invite"}
+                          {isAlreadyCollaboratorOnTask ? "Collaborator" : existingInvite ? existingInvite.status.toLowerCase() : "Send Invite"}
                         </Button>
                       </div>
                     );
@@ -962,6 +1173,8 @@ export default function DashboardPage() {
             </div>
           </Modal>
         </div>
+      ) : activeTab === "analytics" ? (
+        renderAnalyticsTab()
       ) : (
         /* TAB: Profile tab */
         <div className="space-y-8 max-w-3xl mx-auto">

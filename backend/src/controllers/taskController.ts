@@ -63,6 +63,12 @@ export const createTask = async (req: any, res: Response) => {
   const creatorId = req.user.userId;
 
   try {
+    if (dueDate && new Date(dueDate) <= new Date()) {
+      return res.status(400).json({
+        message: "Target due date must be in the future.",
+      });
+    }
+
     if (partnerId) {
       return res.status(400).json({
         message: "Create the task first, then invite collaborators by username.",
@@ -200,7 +206,14 @@ export const updateTask = async (req: any, res: Response) => {
     if (updates.description !== undefined) task.description = updates.description;
     if (updates.status !== undefined) task.status = updates.status;
     if (updates.priority !== undefined) task.priority = updates.priority;
-    if (updates.dueDate !== undefined) task.dueDate = updates.dueDate;
+    if (updates.dueDate !== undefined) {
+      if (updates.dueDate && new Date(updates.dueDate) <= new Date()) {
+        return res.status(400).json({
+          message: "Target due date must be in the future.",
+        });
+      }
+      task.dueDate = updates.dueDate;
+    }
     if (updates.partnerId !== undefined) {
       if (updates.partnerId) {
         return res.status(400).json({

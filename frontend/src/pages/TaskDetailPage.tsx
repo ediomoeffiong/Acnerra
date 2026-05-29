@@ -38,7 +38,26 @@ export default function TaskDetailPage() {
   const [editDueDate, setEditDueDate] = React.useState("");
   const [checkInStatus, setCheckInStatus] = React.useState<CheckInStatus>("IN_PROGRESS");
   const [checkInNotes, setCheckInNotes] = React.useState("");
+  const formatToDateTimeLocal = (dateString?: string | null) => {
+    if (!dateString) return "";
+    const d = new Date(dateString);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  };
 
+  const getMinDateTimeString = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  };
   const fetchTask = React.useCallback(async (background = false) => {
     if (!id) return;
     try {
@@ -57,7 +76,7 @@ export default function TaskDetailPage() {
         setEditDescription(fetchedTask.description || "");
         setEditPriority(fetchedTask.priority);
         setEditStatus(fetchedTask.status);
-        setEditDueDate(fetchedTask.dueDate ? fetchedTask.dueDate.split('T')[0] : "");
+        setEditDueDate(formatToDateTimeLocal(fetchedTask.dueDate));
       }
     } catch (err: any) {
       console.error("Error fetching task details:", err);
@@ -86,6 +105,14 @@ export default function TaskDetailPage() {
   const handleUpdateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!id || !editTitle.trim()) return;
+
+    if (editDueDate) {
+      const selected = new Date(editDueDate);
+      if (selected <= new Date()) {
+        alert("Target due date must be in the future!");
+        return;
+      }
+    }
 
     try {
       const updated = await taskService.updateTask(id, {
@@ -305,8 +332,8 @@ export default function TaskDetailPage() {
                   <div className="flex flex-col">
                     <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Target Due Date</span>
                     <span className="text-xs font-semibold text-zinc-200 mt-0.5">
-                      {task.dueDate ? new Date(task.dueDate).toLocaleDateString(undefined, {
-                        weekday: 'short', year: 'numeric', month: 'short', day: 'numeric'
+                      {task.dueDate ? new Date(task.dueDate).toLocaleString(undefined, {
+                        weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
                       }) : "No deadline assigned"}
                     </span>
                   </div>
@@ -424,8 +451,9 @@ export default function TaskDetailPage() {
 
             <Input
               id="editDueDate"
-              label="Target Date"
-              type="date"
+              label="Target Date and Time"
+              type="datetime-local"
+              min={getMinDateTimeString()}
               value={editDueDate}
               onChange={(e) => setEditDueDate(e.target.value)}
             />

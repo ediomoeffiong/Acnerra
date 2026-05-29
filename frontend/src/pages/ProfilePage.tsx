@@ -76,7 +76,9 @@ export default function ProfilePage() {
   // Handler for navigation from sidebar
   const handleTabChange = (tab: string) => {
     if (tab === "dashboard") {
-      navigate("/dashboard");
+      navigate("/dashboard", { state: { activeTab: "dashboard" } });
+    } else if (tab === "analytics") {
+      navigate("/dashboard", { state: { activeTab: "analytics" } });
     }
   };
 

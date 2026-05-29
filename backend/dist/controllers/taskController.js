@@ -61,6 +61,11 @@ const createTask = async (req, res) => {
     const { title, description, status, priority, dueDate, partnerId } = validatedFields.data;
     const creatorId = req.user.userId;
     try {
+        if (dueDate && new Date(dueDate) <= new Date()) {
+            return res.status(400).json({
+                message: "Target due date must be in the future.",
+            });
+        }
         if (partnerId) {
             return res.status(400).json({
                 message: "Create the task first, then invite collaborators by username.",
@@ -188,8 +193,14 @@ const updateTask = async (req, res) => {
             task.status = updates.status;
         if (updates.priority !== undefined)
             task.priority = updates.priority;
-        if (updates.dueDate !== undefined)
+        if (updates.dueDate !== undefined) {
+            if (updates.dueDate && new Date(updates.dueDate) <= new Date()) {
+                return res.status(400).json({
+                    message: "Target due date must be in the future.",
+                });
+            }
             task.dueDate = updates.dueDate;
+        }
         if (updates.partnerId !== undefined) {
             if (updates.partnerId) {
                 return res.status(400).json({
