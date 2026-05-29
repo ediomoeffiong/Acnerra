@@ -1,19 +1,50 @@
 import api from './api';
-import type { UserSummary } from './taskService';
+
+export interface PartnerRelation {
+  id: string;
+  senderId: {
+    id: string;
+    username: string;
+    name?: string;
+    bio?: string;
+    image?: string;
+  };
+  receiverId: {
+    id: string;
+    username: string;
+    name?: string;
+    bio?: string;
+    image?: string;
+  };
+  mode: 'MUTUAL' | 'SINGLE';
+  status: 'PENDING' | 'ACCEPTED' | 'DECLINED';
+  createdAt: string;
+  updatedAt: string;
+}
 
 export const partnersService = {
-  getPartners: async (): Promise<UserSummary[]> => {
+  getPartners: async (): Promise<PartnerRelation[]> => {
     const response = await api.get('/profiles/partners');
-    return response.data.partners;
+    return response.data.relations;
   },
 
-  addPartner: async (partnerId: string): Promise<any> => {
-    const response = await api.post('/profiles/partners', { partnerId });
+  invitePartner: async (username: string, mode: 'MUTUAL' | 'SINGLE'): Promise<any> => {
+    const response = await api.post('/profiles/partners/invite', { username, mode });
     return response.data;
   },
 
-  removePartner: async (partnerId: string): Promise<any> => {
-    const response = await api.delete(`/profiles/partners/${partnerId}`);
+  acceptPartnerInvite: async (relationId: string): Promise<any> => {
+    const response = await api.post(`/profiles/partners/accept/${relationId}`);
+    return response.data;
+  },
+
+  declinePartnerInvite: async (relationId: string): Promise<any> => {
+    const response = await api.post(`/profiles/partners/decline/${relationId}`);
+    return response.data;
+  },
+
+  removePartner: async (relationId: string): Promise<any> => {
+    const response = await api.delete(`/profiles/partners/${relationId}`);
     return response.data;
   }
 };

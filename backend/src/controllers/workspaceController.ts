@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { Workspace } from '../models/Workspace';
 import { Task } from '../models/Task';
+import { PartnerRelation, PartnerMode, PartnerStatus } from '../models/PartnerRelation';
 
 // Fetch all workspaces for the logged-in user. Seed defaults if empty.
 export const getWorkspaces = async (req: any, res: Response) => {
@@ -8,23 +9,42 @@ export const getWorkspaces = async (req: any, res: Response) => {
     return res.status(401).json({ message: "Not authenticated" });
   }
 
+  const userId = req.user.userId;
+
   try {
-    let workspaces = await Workspace.find({ userId: req.user.userId }).sort({ createdAt: 1 });
-    
-    // Automatically seed Personal and Work if none exist
-    if (workspaces.length === 0) {
-      const personal = await Workspace.create({
+    // Seed defaults if user has no workspaces
+    let userWorkspaces = await Workspace.find({ userId });
+    if (userWorkspaces.length === 0) {
+      await Workspace.create({
         name: "Personal",
-        userId: req.user.userId,
+        userId,
         isDefault: true
       });
-      const work = await Workspace.create({
+      await Workspace.create({
         name: "Work",
-        userId: req.user.userId,
+        userId,
         isDefault: true
       });
-      workspaces = [personal, work];
     }
+
+    // Find mutual partners
+    const mutualRelations = await PartnerRelation.find({
+      status: PartnerStatus.ACCEPTED,
+      mode: PartnerMode.MUTUAL,
+      $or: [{ senderId: userId }, { receiverId: userId }]
+    });
+
+    const mutualPartnerIds = mutualRelations.map(r => 
+      r.senderId.toString() === userId ? r.receiverId : r.senderId
+    );
+
+    // Fetch workspaces for user + mutual partners
+    const workspaces = await Workspace.find({
+      $or: [
+        { userId },
+        { userId: { $in: mutualPartnerIds } }
+      ]
+    }).populate('userId', 'id username name image').sort({ createdAt: 1 });
 
     return res.status(200).json({ workspaces: workspaces.map(w => w.toJSON()) });
   } catch (error) {

@@ -8,6 +8,7 @@ const NotificationSchema = new Schema({
   userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   taskId: { type: Schema.Types.ObjectId, ref: 'Task', default: null },
   inviteId: { type: Schema.Types.ObjectId, ref: 'Invite', default: null },
+  partnerRelationId: { type: Schema.Types.ObjectId, ref: 'PartnerRelation', default: null },
 }, { timestamps: true });
 
 NotificationSchema.virtual('id').get(function() {

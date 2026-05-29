@@ -1,5 +1,5 @@
 import * as React from "react";
-import { LayoutDashboard, BarChart3, Users, User, LogOut, X, Menu } from "lucide-react";
+import { LayoutDashboard, Folder, BarChart3, Users, User, LogOut, X, Menu } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { cn } from "../../utils";
@@ -24,6 +24,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const menuItems = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { id: "workspace", label: "Workspace", icon: Folder },
     { id: "analytics", label: "Analytics", icon: BarChart3 },
     { id: "partners", label: "Partners", icon: Users },
     { id: "profile", label: "Profile", icon: User },
@@ -73,6 +74,8 @@ const Sidebar: React.FC<SidebarProps> = ({
                 onClick={() => {
                   if (item.id === "dashboard") {
                     navigate("/dashboard", { state: { activeTab: "dashboard" } });
+                  } else if (item.id === "workspace") {
+                    navigate("/dashboard", { state: { activeTab: "workspace" } });
                   } else if (item.id === "analytics") {
                     navigate("/dashboard", { state: { activeTab: "analytics" } });
                   } else if (item.id === "partners") {

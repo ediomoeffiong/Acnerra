@@ -7,6 +7,7 @@ interface NotificationInput {
   message: string;
   taskId?: any;
   inviteId?: any;
+  partnerRelationId?: any;
 }
 
 export const createNotification = async (input: NotificationInput) => {
@@ -17,5 +18,6 @@ export const createNotification = async (input: NotificationInput) => {
     message: input.message,
     taskId: input.taskId || null,
     inviteId: input.inviteId || null,
+    partnerRelationId: input.partnerRelationId || null,
   });
 };

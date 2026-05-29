@@ -10,6 +10,7 @@ const createNotification = async (input) => {
         message: input.message,
         taskId: input.taskId || null,
         inviteId: input.inviteId || null,
+        partnerRelationId: input.partnerRelationId || null,
     });
 };
 exports.createNotification = createNotification;

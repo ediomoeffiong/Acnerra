@@ -10,6 +10,7 @@ const NotificationSchema = new mongoose_1.Schema({
     userId: { type: mongoose_1.Schema.Types.ObjectId, ref: 'User', required: true },
     taskId: { type: mongoose_1.Schema.Types.ObjectId, ref: 'Task', default: null },
     inviteId: { type: mongoose_1.Schema.Types.ObjectId, ref: 'Invite', default: null },
+    partnerRelationId: { type: mongoose_1.Schema.Types.ObjectId, ref: 'PartnerRelation', default: null },
 }, { timestamps: true });
 NotificationSchema.virtual('id').get(function () {
     return this._id.toHexString();
