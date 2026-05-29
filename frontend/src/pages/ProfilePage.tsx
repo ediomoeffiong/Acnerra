@@ -42,8 +42,8 @@ export default function ProfilePage() {
 
   const isOwnProfile = currentUser?.username?.toLowerCase() === username?.toLowerCase();
 
-  const fetchProfile = async () => {
-    setLoading(true);
+  const fetchProfile = async (background = false) => {
+    if (!background) setLoading(true);
     setError(null);
     try {
       const response = await api.get(`/profiles/${username}`);
@@ -57,13 +57,19 @@ export default function ProfilePage() {
         setError("An error occurred while fetching the profile details.");
       }
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   };
 
   React.useEffect(() => {
     if (username) {
       fetchProfile();
+      
+      const interval = setInterval(() => {
+        fetchProfile(true); // background load every 5 seconds
+      }, 5000);
+      
+      return () => clearInterval(interval);
     }
   }, [username]);
 

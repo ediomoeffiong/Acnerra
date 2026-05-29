@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { z } from 'zod';
 import { CheckIn, CheckInStatus } from '../models/CheckIn';
-import { Task } from '../models/Task';
+import { Task, TaskStatus } from '../models/Task';
 import { createNotification } from '../lib/notifications';
 import { canAccessTask, getTaskParticipantIds } from '../lib/taskAccess';
 
@@ -54,6 +54,11 @@ export const createCheckIn = async (req: any, res: Response) => {
       status: parsed.data.status,
       notes: parsed.data.notes,
     });
+
+    if (parsed.data.status === CheckInStatus.COMPLETED) {
+      task.status = TaskStatus.COMPLETED;
+      await task.save();
+    }
 
     const otherParticipantIds = getTaskParticipantIds(task).filter((id) => id !== req.user.userId);
     await Promise.all(otherParticipantIds.map((userId) => createNotification({

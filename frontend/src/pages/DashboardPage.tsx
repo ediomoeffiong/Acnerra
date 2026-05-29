@@ -76,9 +76,10 @@ export default function DashboardPage() {
   const [editBioText, setEditBioText] = React.useState(profileBio);
 
   // Load Dashboard Data & Tasks
-  const loadDashboardData = React.useCallback(async () => {
+  // Load Dashboard Data & Tasks
+  const loadDashboardData = React.useCallback(async (background = false) => {
     try {
-      setLoadingDashboard(true);
+      if (!background) setLoadingDashboard(true);
       const data = await taskService.getDashboardData();
       setDashboardData(data);
       setTasks(data.allTasks || []);
@@ -91,12 +92,18 @@ export default function DashboardPage() {
     } catch (error) {
       console.error("Failed to load dashboard data from API:", error);
     } finally {
-      setLoadingDashboard(false);
+      if (!background) setLoadingDashboard(false);
     }
   }, []);
 
   React.useEffect(() => {
     loadDashboardData();
+    
+    const interval = setInterval(() => {
+      loadDashboardData(true); // background load every 5 seconds
+    }, 5000);
+    
+    return () => clearInterval(interval);
   }, [loadDashboardData]);
 
   // Debounced search for profiles

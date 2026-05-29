@@ -31,6 +31,12 @@ const Navbar: React.FC<NavbarProps> = ({ activeTab, onMenuClick }) => {
   React.useEffect(() => {
     if (user) {
       loadNotifications();
+      
+      const interval = setInterval(() => {
+        loadNotifications();
+      }, 5000); // Poll notifications every 5 seconds
+      
+      return () => clearInterval(interval);
     }
   }, [loadNotifications, user]);
 

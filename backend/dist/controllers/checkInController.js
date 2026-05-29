@@ -51,6 +51,10 @@ const createCheckIn = async (req, res) => {
             status: parsed.data.status,
             notes: parsed.data.notes,
         });
+        if (parsed.data.status === CheckIn_1.CheckInStatus.COMPLETED) {
+            task.status = Task_1.TaskStatus.COMPLETED;
+            await task.save();
+        }
         const otherParticipantIds = (0, taskAccess_1.getTaskParticipantIds)(task).filter((id) => id !== req.user.userId);
         await Promise.all(otherParticipantIds.map((userId) => (0, notifications_1.createNotification)({
             userId,

@@ -39,10 +39,10 @@ export default function TaskDetailPage() {
   const [checkInStatus, setCheckInStatus] = React.useState<CheckInStatus>("IN_PROGRESS");
   const [checkInNotes, setCheckInNotes] = React.useState("");
 
-  const fetchTask = React.useCallback(async () => {
+  const fetchTask = React.useCallback(async (background = false) => {
     if (!id) return;
     try {
-      setLoading(true);
+      if (!background) setLoading(true);
       setError(null);
       const [fetchedTask, fetchedCheckIns] = await Promise.all([
         taskService.getTask(id),
@@ -51,12 +51,14 @@ export default function TaskDetailPage() {
       setTask(fetchedTask);
       setCheckIns(fetchedCheckIns);
       
-      // Initialize edit states
-      setEditTitle(fetchedTask.title);
-      setEditDescription(fetchedTask.description || "");
-      setEditPriority(fetchedTask.priority);
-      setEditStatus(fetchedTask.status);
-      setEditDueDate(fetchedTask.dueDate ? fetchedTask.dueDate.split('T')[0] : "");
+      // Initialize edit states (only if not background load, to avoid overwriting typed edit states!)
+      if (!background) {
+        setEditTitle(fetchedTask.title);
+        setEditDescription(fetchedTask.description || "");
+        setEditPriority(fetchedTask.priority);
+        setEditStatus(fetchedTask.status);
+        setEditDueDate(fetchedTask.dueDate ? fetchedTask.dueDate.split('T')[0] : "");
+      }
     } catch (err: any) {
       console.error("Error fetching task details:", err);
       if (err.response?.status === 403) {
@@ -67,12 +69,18 @@ export default function TaskDetailPage() {
         setError("An error occurred while loading the task details.");
       }
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   }, [id]);
 
   React.useEffect(() => {
     fetchTask();
+    
+    const interval = setInterval(() => {
+      fetchTask(true); // background load every 5 seconds
+    }, 5000);
+    
+    return () => clearInterval(interval);
   }, [fetchTask]);
 
   const handleUpdateTask = async (e: React.FormEvent) => {
