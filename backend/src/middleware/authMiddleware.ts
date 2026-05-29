@@ -2,7 +2,16 @@ import { Request, Response, NextFunction } from 'express';
 import { decrypt } from '../lib/auth';
 
 export const authMiddleware = async (req: any, res: Response, next: NextFunction) => {
-  const session = req.cookies.session;
+  let session = req.cookies.session;
+
+  if (!session) {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      session = authHeader.substring(7);
+    } else if (authHeader) {
+      session = authHeader;
+    }
+  }
 
   if (!session) {
     return res.status(401).json({ message: "No session found. Please log in." });

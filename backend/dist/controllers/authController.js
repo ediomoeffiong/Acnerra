@@ -54,6 +54,7 @@ const register = async (req, res) => {
         });
         return res.status(201).json({
             message: "User registered successfully",
+            token: session,
             user: {
                 id: user._id.toString(),
                 username: user.username,
@@ -107,6 +108,7 @@ const login = async (req, res) => {
         });
         return res.status(200).json({
             message: "Login successful",
+            token: session,
             user: {
                 id: user._id.toString(),
                 username: user.username,

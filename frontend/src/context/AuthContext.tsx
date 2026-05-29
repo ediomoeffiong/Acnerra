@@ -54,10 +54,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async () => {
     try {
       await api.post('/auth/logout');
-      setUser(null);
-      localStorage.removeItem("acnerra_logged_in");
     } catch (error) {
       console.error('Logout failed:', error);
+    } finally {
+      setUser(null);
+      localStorage.removeItem("acnerra_logged_in");
+      localStorage.removeItem("acnerra_token");
     }
   };
 

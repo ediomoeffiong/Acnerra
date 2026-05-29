@@ -24,12 +24,36 @@ const api = axios.create({
   },
 });
 
-// Optional: Add interceptors for global error handling (e.g., redirect to login on 401)
-api.interceptors.response.use(
-  (response) => response,
+// Add request interceptor to include Authorization header if token exists in localStorage
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('acnerra_token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
   (error) => {
-    // If the server returns a 401 Unauthorized, we might want to trigger a logout event
-    // For now, we just pass the error down to be handled by the specific caller
+    return Promise.reject(error);
+  }
+);
+
+// Add response interceptor for automatic token saving and global 401 state cleanup
+api.interceptors.response.use(
+  (response) => {
+    // If the response contains a token in the body, store it as a fallback
+    if (response.data && response.data.token) {
+      localStorage.setItem('acnerra_token', response.data.token);
+      localStorage.setItem('acnerra_logged_in', 'true');
+    }
+    return response;
+  },
+  (error) => {
+    // If the server returns a 401 Unauthorized, clear locally stored token/login state
+    if (error.response && error.response.status === 401) {
+      localStorage.removeItem('acnerra_token');
+      localStorage.removeItem('acnerra_logged_in');
+    }
     return Promise.reject(error);
   }
 );
