@@ -6,6 +6,7 @@ const PartnerRelation_1 = require("../models/PartnerRelation");
 const User_1 = require("../models/User");
 const notifications_1 = require("../lib/notifications");
 const Notification_1 = require("../models/Notification");
+const Workspace_1 = require("../models/Workspace");
 const PartnerInviteSchema = zod_1.z.object({
     username: zod_1.z.string().min(3, "Username must be at least 3 characters").max(20).trim(),
     mode: zod_1.z.nativeEnum(PartnerRelation_1.PartnerMode),
@@ -192,6 +193,10 @@ const acceptPartnerInvite = async (req, res) => {
                 if (!receiver.accountabilityPartners.includes(sender._id)) {
                     receiver.accountabilityPartners.push(sender._id);
                 }
+                await Promise.all([
+                    Workspace_1.Workspace.updateMany({ userId: sender._id }, { $addToSet: { collaboratorIds: receiver._id } }),
+                    Workspace_1.Workspace.updateMany({ userId: receiver._id }, { $addToSet: { collaboratorIds: sender._id } })
+                ]);
             }
             else if (relation.mode === PartnerRelation_1.PartnerMode.SINGLE) {
                 // Single: receiver monitors sender

@@ -432,7 +432,11 @@ export const getDashboardData = async (req: any, res: Response) => {
     const completedTasks = allTasks.filter(t => t.status === TaskStatus.COMPLETED).length;
     const inProgressTasks = allTasks.filter(t => t.status === TaskStatus.IN_PROGRESS).length;
     const pendingTasks = allTasks.filter(t => t.status === TaskStatus.PENDING).length;
-    const sharedTasks = allTasks.filter(t => getTaskParticipantIds(t).length > 1).length;
+    const activeSharedTasks = allTasks.filter(t =>
+      getTaskParticipantIds(t).length > 1 &&
+      [TaskStatus.IN_PROGRESS, TaskStatus.MISSED].includes(t.status as TaskStatus)
+    );
+    const sharedTasks = activeSharedTasks.length;
 
     // Overdue tasks: status is not COMPLETED, has a dueDate, and dueDate is in the past relative to now
     const now = new Date();
@@ -458,7 +462,7 @@ export const getDashboardData = async (req: any, res: Response) => {
     }).slice(0, 5); // Limit to top 5 upcoming
 
     // 4. Shared Tasks Center: tasks containing both creator and partner information
-    const sharedTasksList = allTasks.filter(t => getTaskParticipantIds(t).length > 1);
+    const sharedTasksList = activeSharedTasks;
 
     const latestCheckIns = await CheckIn.find({ taskId: { $in: allTasks.map((t) => t._id) } })
       .populate('userId', 'username name image')
@@ -540,8 +544,7 @@ export const getDashboardData = async (req: any, res: Response) => {
       .map(({ createdAt, ...activity }) => activity);
 
     // 6. Check-in Reminders
-    const activeSharedTasks = sharedTasksList.filter(t => t.status !== TaskStatus.COMPLETED);
-    const checkInReminders = activeSharedTasks.slice(0, 3).map(t => {
+    const checkInReminders = sharedTasksList.slice(0, 3).map(t => {
       const isCreatorSelf = (t.creatorId as any)?._id?.toString() === userId;
       const collaborator = (t.collaboratorIds as any[])?.find((participant: any) => getIdString(participant) !== userId);
       const partnerUser = collaborator || (isCreatorSelf ? t.partnerId : t.creatorId);

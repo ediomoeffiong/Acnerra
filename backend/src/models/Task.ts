@@ -3,6 +3,7 @@ import { Schema, model } from 'mongoose';
 export enum TaskStatus {
   PENDING = 'PENDING',
   IN_PROGRESS = 'IN_PROGRESS',
+  MISSED = 'MISSED',
   COMPLETED = 'COMPLETED'
 }
 

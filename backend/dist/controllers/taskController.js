@@ -395,7 +395,9 @@ const getDashboardData = async (req, res) => {
         const completedTasks = allTasks.filter(t => t.status === Task_1.TaskStatus.COMPLETED).length;
         const inProgressTasks = allTasks.filter(t => t.status === Task_1.TaskStatus.IN_PROGRESS).length;
         const pendingTasks = allTasks.filter(t => t.status === Task_1.TaskStatus.PENDING).length;
-        const sharedTasks = allTasks.filter(t => (0, taskAccess_1.getTaskParticipantIds)(t).length > 1).length;
+        const activeSharedTasks = allTasks.filter(t => (0, taskAccess_1.getTaskParticipantIds)(t).length > 1 &&
+            [Task_1.TaskStatus.IN_PROGRESS, Task_1.TaskStatus.MISSED].includes(t.status));
+        const sharedTasks = activeSharedTasks.length;
         // Overdue tasks: status is not COMPLETED, has a dueDate, and dueDate is in the past relative to now
         const now = new Date();
         const overdueTasks = allTasks.filter(t => {
@@ -419,7 +421,7 @@ const getDashboardData = async (req, res) => {
             return dateA - dateB;
         }).slice(0, 5); // Limit to top 5 upcoming
         // 4. Shared Tasks Center: tasks containing both creator and partner information
-        const sharedTasksList = allTasks.filter(t => (0, taskAccess_1.getTaskParticipantIds)(t).length > 1);
+        const sharedTasksList = activeSharedTasks;
         const latestCheckIns = await CheckIn_1.CheckIn.find({ taskId: { $in: allTasks.map((t) => t._id) } })
             .populate('userId', 'username name image')
             .populate('taskId', 'title')
@@ -499,8 +501,7 @@ const getDashboardData = async (req, res) => {
             .slice(0, 10)
             .map(({ createdAt, ...activity }) => activity);
         // 6. Check-in Reminders
-        const activeSharedTasks = sharedTasksList.filter(t => t.status !== Task_1.TaskStatus.COMPLETED);
-        const checkInReminders = activeSharedTasks.slice(0, 3).map(t => {
+        const checkInReminders = sharedTasksList.slice(0, 3).map(t => {
             const isCreatorSelf = t.creatorId?._id?.toString() === userId;
             const collaborator = t.collaboratorIds?.find((participant) => (0, taskAccess_1.getIdString)(participant) !== userId);
             const partnerUser = collaborator || (isCreatorSelf ? t.partnerId : t.creatorId);

@@ -4,6 +4,7 @@ import { PartnerRelation, PartnerMode, PartnerStatus } from '../models/PartnerRe
 import { User } from '../models/User';
 import { createNotification } from '../lib/notifications';
 import { Notification } from '../models/Notification';
+import { Workspace } from '../models/Workspace';
 
 const PartnerInviteSchema = z.object({
   username: z.string().min(3, "Username must be at least 3 characters").max(20).trim(),
@@ -209,6 +210,16 @@ export const acceptPartnerInvite = async (req: any, res: Response) => {
         if (!receiver.accountabilityPartners.includes(sender._id as any)) {
           receiver.accountabilityPartners.push(sender._id as any);
         }
+        await Promise.all([
+          Workspace.updateMany(
+            { userId: sender._id },
+            { $addToSet: { collaboratorIds: receiver._id } }
+          ),
+          Workspace.updateMany(
+            { userId: receiver._id },
+            { $addToSet: { collaboratorIds: sender._id } }
+          )
+        ]);
       } else if (relation.mode === PartnerMode.SINGLE) {
         // Single: receiver monitors sender
         if (!sender.accountabilityPartners.includes(receiver._id as any)) {

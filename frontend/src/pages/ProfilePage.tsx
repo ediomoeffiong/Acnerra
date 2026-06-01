@@ -5,6 +5,7 @@ import { AppLayout } from "../components/layouts/AppLayout";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Skeleton } from "../components/ui/Skeleton";
+import { Modal } from "../components/ui/Modal";
 import { EditProfileModal } from "../components/profile/EditProfileModal";
 import api from "../services/api";
 import { 
@@ -25,6 +26,9 @@ interface ProfileStats {
   completedTasks: number;
   totalTasks: number;
   streakDays: number;
+  streakDates: string[];
+  missedDates: string[];
+  partnersCount: number;
   consistencyRank: string;
 }
 
@@ -39,6 +43,8 @@ export default function ProfilePage() {
   const [error, setError] = React.useState<string | null>(null);
   
   const [isEditModalOpen, setIsEditModalOpen] = React.useState(false);
+  const [isStreakCalendarOpen, setIsStreakCalendarOpen] = React.useState(false);
+  const [streakCalendarMonth, setStreakCalendarMonth] = React.useState(() => new Date());
 
   const isOwnProfile = currentUser?.username?.toLowerCase() === username?.toLowerCase();
 
@@ -88,6 +94,81 @@ export default function ProfilePage() {
     if (!dateString) return "";
     const options: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'long', day: 'numeric' };
     return new Date(dateString).toLocaleDateString(undefined, options);
+  };
+
+  const renderStreakCalendar = () => {
+    const year = streakCalendarMonth.getFullYear();
+    const month = streakCalendarMonth.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const leadingBlankDays = firstDay.getDay();
+    const streakSet = new Set(stats?.streakDates || []);
+    const missedSet = new Set(stats?.missedDates || []);
+    const todayKey = new Date().toISOString().slice(0, 10);
+
+    return (
+      <Modal
+        isOpen={isStreakCalendarOpen}
+        onClose={() => setIsStreakCalendarOpen(false)}
+        title="Streak Calendar"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setStreakCalendarMonth(new Date(year, month - 1, 1))}
+              className="px-2 py-1 rounded-lg border border-zinc-800 text-xs text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900"
+            >
+              Previous
+            </button>
+            <div className="text-center">
+              <p className="text-sm font-bold text-zinc-100">
+                {streakCalendarMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
+              </p>
+              <p className="text-[10px] text-zinc-500">Fire marks successful streak days.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setStreakCalendarMonth(new Date(year, month + 1, 1))}
+              className="px-2 py-1 rounded-lg border border-zinc-800 text-xs text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900"
+            >
+              Next
+            </button>
+          </div>
+          <div className="grid grid-cols-7 gap-1 text-center">
+            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
+              <div key={day} className="text-[10px] font-bold uppercase tracking-wider text-zinc-600 py-1">
+                {day}
+              </div>
+            ))}
+            {Array.from({ length: leadingBlankDays }).map((_, index) => (
+              <div key={`blank-${index}`} className="aspect-square" />
+            ))}
+            {Array.from({ length: daysInMonth }).map((_, index) => {
+              const day = index + 1;
+              const key = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+              const hasStreak = streakSet.has(key);
+              const wasMissed = missedSet.has(key);
+              const isToday = key === todayKey;
+              return (
+                <div
+                  key={key}
+                  className={[
+                    "aspect-square rounded-lg border flex flex-col items-center justify-center text-xs font-bold",
+                    hasStreak ? "bg-amber-950/30 border-amber-800/50 text-amber-200" : "bg-zinc-950/40 border-zinc-900 text-zinc-500",
+                    wasMissed ? "bg-red-950/30 border-red-900/60 text-red-300" : "",
+                    isToday ? "ring-1 ring-indigo-400" : ""
+                  ].join(" ")}
+                >
+                  <span>{day}</span>
+                  {hasStreak ? <span className="text-sm leading-none mt-0.5">🔥</span> : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </Modal>
+    );
   };
 
   return (
@@ -286,7 +367,10 @@ export default function ProfilePage() {
                   </p>
                 </Card>
 
-                <Card className="p-5 border-zinc-900 bg-zinc-950/40 relative overflow-hidden">
+                <Card
+                  className="p-5 border-zinc-900 bg-zinc-950/40 relative overflow-hidden cursor-pointer hover:border-amber-800/60 transition-colors"
+                  onClick={() => setIsStreakCalendarOpen(true)}
+                >
                   <div className="flex justify-between items-start">
                     <div className="space-y-1">
                       <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block">Streak Record</span>
@@ -303,6 +387,8 @@ export default function ProfilePage() {
 
               </div>
             </div>
+
+            {renderStreakCalendar()}
 
             {/* Profile milestones / accountability feed */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -336,7 +422,7 @@ export default function ProfilePage() {
 
                 <Card className="p-4 border-zinc-900 bg-zinc-950/40 text-center">
                   <p className="text-xs text-zinc-500 font-semibold">
-                    Partners are linked directly via task invites. Create a milestone to add accountability partners.
+                    {stats?.partnersCount || 0} accountability partner{stats?.partnersCount === 1 ? "" : "s"} can view this profile and its public accountability summary.
                   </p>
                 </Card>
               </div>

@@ -35,6 +35,15 @@ interface Buddy {
   status: "active" | "pending";
 }
 
+interface ProfileStreakStats {
+  completedTasks: number;
+  totalTasks: number;
+  streakDays: number;
+  streakDates: string[];
+  missedDates: string[];
+  consistencyRank: string;
+}
+
 
 
 export default function DashboardPage() {
@@ -74,6 +83,8 @@ export default function DashboardPage() {
   const [isTaskModalOpen, setIsTaskModalOpen] = React.useState(false);
   const [isBuddyModalOpen, setIsBuddyModalOpen] = React.useState(false);
   const [isEditProfileModalOpen, setIsEditProfileModalOpen] = React.useState(false);
+  const [isStreakCalendarOpen, setIsStreakCalendarOpen] = React.useState(false);
+  const [streakCalendarMonth, setStreakCalendarMonth] = React.useState(() => new Date());
 
   // New Forms State
   const [newTaskTitle, setNewTaskTitle] = React.useState("");
@@ -108,6 +119,7 @@ export default function DashboardPage() {
   const [searchingProfiles, setSearchingProfiles] = React.useState(false);
 
   const [editBioText, setEditBioText] = React.useState(profileBio);
+  const [profileStats, setProfileStats] = React.useState<ProfileStreakStats | null>(null);
 
   // Load Dashboard Data & Tasks
   const loadDashboardData = React.useCallback(async (background = false) => {
@@ -116,22 +128,26 @@ export default function DashboardPage() {
       const data = await taskService.getDashboardData();
       setDashboardData(data);
       setTasks(data.allTasks || []);
-      const [inviteList, analyticsData, workspacesList, partnersList] = await Promise.all([
+      const [inviteList, analyticsData, workspacesList, partnersList, profileResponse] = await Promise.all([
         inviteService.listInvites(),
         analyticsService.getAnalytics(analyticsRange),
         workspaceService.getWorkspaces(),
-        partnersService.getPartners()
+        partnersService.getPartners(),
+        user?.username ? api.get(`/profiles/${user.username}`).catch(() => null) : Promise.resolve(null)
       ]);
       setInvites(inviteList);
       setAnalytics(analyticsData);
       setWorkspaces(workspacesList);
       setPartnerRelations(partnersList);
+      if (profileResponse?.data?.stats) {
+        setProfileStats(profileResponse.data.stats);
+      }
     } catch (error) {
       console.error("Failed to load dashboard data from API:", error);
     } finally {
       if (!background) setLoadingDashboard(false);
     }
-  }, [analyticsRange]);
+  }, [analyticsRange, user?.username]);
 
   React.useEffect(() => {
     loadDashboardData();
@@ -206,14 +222,16 @@ export default function DashboardPage() {
   }, [tasks, selectedWorkspaceId]);
 
   const filteredSharedTasks = React.useMemo(() => {
-    if (!dashboardData?.sharedTasks) return [];
+    const activeSharedTasks = (dashboardData?.sharedTasks || []).filter((task) =>
+      task.status === "IN_PROGRESS" || task.status === "MISSED"
+    );
     if (selectedWorkspaceId === "all") {
-      return dashboardData.sharedTasks;
+      return activeSharedTasks;
     }
     if (selectedWorkspaceId === "none") {
-      return dashboardData.sharedTasks.filter(t => !t.workspaceId);
+      return activeSharedTasks.filter(t => !t.workspaceId);
     }
-    return dashboardData.sharedTasks.filter(t => t.workspaceId === selectedWorkspaceId);
+    return activeSharedTasks.filter(t => t.workspaceId === selectedWorkspaceId);
   }, [dashboardData?.sharedTasks, selectedWorkspaceId]);
 
   const filteredOverdueTasks = React.useMemo(() => {
@@ -313,12 +331,14 @@ export default function DashboardPage() {
     e.preventDefault();
     if (!workspaceNameInput.trim()) return;
     try {
-      await workspaceService.createWorkspace(workspaceNameInput);
+      const createdWorkspace = await workspaceService.createWorkspace(workspaceNameInput);
       setWorkspaceNameInput("");
-      const workspacesList = await workspaceService.getWorkspaces();
-      setWorkspaces(workspacesList);
-    } catch (error) {
+      await loadDashboardData(true);
+      setSelectedWorkspaceId(createdWorkspace.id);
+    } catch (error: any) {
+      const message = error.response?.data?.message || "Failed to create workspace.";
       console.error("Failed to create workspace:", error);
+      alert(message);
     }
   };
 
@@ -448,15 +468,26 @@ export default function DashboardPage() {
     const taskToToggle = tasks.find(t => t.id === id);
     if (!taskToToggle) return;
 
-    let nextStatus: Task["status"] = "PENDING";
+    let nextStatus: Task["status"] = "IN_PROGRESS";
     if (taskToToggle.status === "PENDING") nextStatus = "IN_PROGRESS";
     else if (taskToToggle.status === "IN_PROGRESS") nextStatus = "COMPLETED";
+    else if (taskToToggle.status === "MISSED") nextStatus = "IN_PROGRESS";
+    else if (taskToToggle.status === "COMPLETED") nextStatus = "IN_PROGRESS";
 
     try {
       await taskService.updateTask(id, { status: nextStatus });
       await loadDashboardData();
     } catch (error) {
       console.error("Failed to toggle task status:", error);
+    }
+  };
+
+  const handleSetTaskStatus = async (id: string, status: Task["status"]) => {
+    try {
+      await taskService.updateTask(id, { status });
+      await loadDashboardData();
+    } catch (error) {
+      console.error("Failed to set task status:", error);
     }
   };
 
@@ -508,6 +539,82 @@ export default function DashboardPage() {
     } else {
       return `Due on ${new Date(dueDate).toLocaleDateString()} at ${timeStr}`;
     }
+  };
+
+  const renderStreakCalendar = (streakDates: string[] = [], missedDates: string[] = []) => {
+    const year = streakCalendarMonth.getFullYear();
+    const month = streakCalendarMonth.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const leadingBlankDays = firstDay.getDay();
+    const streakSet = new Set(streakDates);
+    const missedSet = new Set(missedDates);
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const monthLabel = streakCalendarMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+
+    return (
+      <Modal
+        isOpen={isStreakCalendarOpen}
+        onClose={() => setIsStreakCalendarOpen(false)}
+        title="Streak Calendar"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setStreakCalendarMonth(new Date(year, month - 1, 1))}
+              className="px-2 py-1 rounded-lg border border-zinc-800 text-xs text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900"
+            >
+              Previous
+            </button>
+            <div className="text-center">
+              <p className="text-sm font-bold text-zinc-100">{monthLabel}</p>
+              <p className="text-[10px] text-zinc-500">Fire marks successful streak days.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setStreakCalendarMonth(new Date(year, month + 1, 1))}
+              className="px-2 py-1 rounded-lg border border-zinc-800 text-xs text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900"
+            >
+              Next
+            </button>
+          </div>
+
+          <div className="grid grid-cols-7 gap-1 text-center">
+            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
+              <div key={day} className="text-[10px] font-bold uppercase tracking-wider text-zinc-600 py-1">
+                {day}
+              </div>
+            ))}
+            {Array.from({ length: leadingBlankDays }).map((_, index) => (
+              <div key={`blank-${index}`} className="aspect-square" />
+            ))}
+            {Array.from({ length: daysInMonth }).map((_, index) => {
+              const day = index + 1;
+              const key = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+              const hasStreak = streakSet.has(key);
+              const wasMissed = missedSet.has(key);
+              const isToday = key === todayKey;
+
+              return (
+                <div
+                  key={key}
+                  className={cn(
+                    "aspect-square rounded-lg border flex flex-col items-center justify-center text-xs font-bold",
+                    hasStreak ? "bg-amber-950/30 border-amber-800/50 text-amber-200" : "bg-zinc-950/40 border-zinc-900 text-zinc-500",
+                    wasMissed && "bg-red-950/30 border-red-900/60 text-red-300",
+                    isToday && "ring-1 ring-indigo-400"
+                  )}
+                >
+                  <span>{day}</span>
+                  {hasStreak ? <span className="text-sm leading-none mt-0.5">🔥</span> : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </Modal>
+    );
   };
 
   // TAB: Partners tab render
@@ -784,6 +891,7 @@ export default function DashboardPage() {
                       ].filter((t, idx, self) => 
                         self.findIndex(x => x.id === t.id) === idx
                       ).filter(t => {
+                        if (t.status !== "IN_PROGRESS" && t.status !== "MISSED") return false;
                         const tCreatorId = typeof t.creatorId === 'string' ? t.creatorId : t.creatorId?.id;
                         const isOwner = tCreatorId === user?.id;
                         const isPartnerOwner = tCreatorId === partner.id;
@@ -805,7 +913,13 @@ export default function DashboardPage() {
                                 {partner.name ? partner.name[0].toUpperCase() : partner.username[0].toUpperCase()}
                               </div>
                               <div className="flex flex-col text-left">
-                                <span className="text-xs font-bold text-zinc-200">{partner.name || partner.username}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => navigate(`/profile/${partner.username}`)}
+                                  className="text-xs font-bold text-zinc-200 hover:text-indigo-400 transition-colors text-left"
+                                >
+                                  {partner.name || partner.username}
+                                </button>
                                 <span className="text-[10px] text-zinc-500">@{partner.username}</span>
                               </div>
                             </div>
@@ -1271,11 +1385,28 @@ export default function DashboardPage() {
             const completedWsTasks = wsTasks.filter(t => t.status === "COMPLETED").length;
             const inProgressWsTasks = wsTasks.filter(t => t.status === "IN_PROGRESS").length;
             const pendingWsTasks = wsTasks.filter(t => t.status === "PENDING").length;
+            const missedWsTasks = wsTasks.filter(t => t.status === "MISSED").length;
             const overdueWsTasks = wsTasks.filter(t => t.status !== "COMPLETED" && t.dueDate && new Date(t.dueDate) < now).length;
             
             const wsCompletionRate = totalWsTasks ? Math.round((completedWsTasks / totalWsTasks) * 100) : 0;
 
             const isEditing = editingWorkspaceId === w.id;
+            const sharedPartnerMap = new Map<string, any>();
+            (w.collaboratorIds || []).forEach((partner: any) => {
+              const partnerId = partner?.id || partner?._id || partner;
+              if (partnerId && String(partnerId) !== user?.id) {
+                sharedPartnerMap.set(String(partnerId), partner);
+              }
+            });
+            wsTasks.forEach((task) => {
+              [task.partnerId, ...(task.collaboratorIds || [])].forEach((partner: any) => {
+                const partnerId = partner?.id || partner?._id || partner;
+                if (partnerId && String(partnerId) !== user?.id) {
+                  sharedPartnerMap.set(String(partnerId), partner);
+                }
+              });
+            });
+            const sharedWorkspacePartners = Array.from(sharedPartnerMap.values());
 
             return (
               <Card key={w.id} className="p-5 border-zinc-900 bg-zinc-950/20 relative group hover:border-zinc-800 transition-all duration-300 flex flex-col justify-between">
@@ -1360,6 +1491,11 @@ export default function DashboardPage() {
                           {overdueWsTasks} Overdue
                         </span>
                       )}
+                      {missedWsTasks > 0 && (
+                        <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-red-950/40 text-red-300 border border-red-900/30">
+                          {missedWsTasks} Missed
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -1401,6 +1537,32 @@ export default function DashboardPage() {
                       </div>
                     </div>
                   )}
+
+                  <div className="pt-2.5 border-t border-zinc-900/40 text-left">
+                    <span className="text-[10px] font-bold text-zinc-550 uppercase tracking-wider block mb-1.5">
+                      Shared Partners
+                    </span>
+                    {sharedWorkspacePartners.length === 0 ? (
+                      <p className="text-[10px] text-zinc-650 italic">No partners are sharing this workspace yet.</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {sharedWorkspacePartners.map((partner: any) => {
+                          const partnerId = partner?.id || partner?._id || partner;
+                          const username = partner?.username || "partner";
+                          return (
+                            <button
+                              type="button"
+                              key={String(partnerId)}
+                              onClick={() => partner?.username && navigate(`/profile/${partner.username}`)}
+                              className="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-900/60 border border-zinc-900 text-[10px] text-zinc-300 font-semibold hover:border-indigo-900/50 hover:text-indigo-300"
+                            >
+                              @{username}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
 
                   {/* Tasks List */}
                   <div className="space-y-2 pt-3 border-t border-zinc-900/50">
@@ -1448,6 +1610,17 @@ export default function DashboardPage() {
                             >
                               {t.priority.toLowerCase()}
                             </Badge>
+                            <select
+                              value={t.status}
+                              onChange={(event) => handleSetTaskStatus(t.id, event.target.value as Task["status"])}
+                              className="rounded border border-zinc-800 bg-zinc-950 px-1.5 py-1 text-[9px] font-semibold text-zinc-300 focus:outline-none focus:ring-1 focus:ring-zinc-600"
+                              title="Change task status"
+                            >
+                              <option value="PENDING">Pending</option>
+                              <option value="IN_PROGRESS">In progress</option>
+                              <option value="MISSED">Missed</option>
+                              <option value="COMPLETED">Completed</option>
+                            </select>
                           </div>
                         ))}
                       </div>
@@ -1853,6 +2026,8 @@ export default function DashboardPage() {
                                 >
                                   {task.status === "COMPLETED" ? (
                                     <CheckCircle2 className="h-5 w-5 text-indigo-500" />
+                                  ) : task.status === "MISSED" ? (
+                                    <AlertTriangle className="h-5 w-5 text-red-400" />
                                   ) : task.status === "IN_PROGRESS" ? (
                                     <Clock className="h-5 w-5 text-purple-400" />
                                   ) : (
@@ -1867,7 +2042,7 @@ export default function DashboardPage() {
                                     >
                                       {task.title}
                                     </span>
-                                    <Badge variant={task.status === "COMPLETED" ? "success" : task.status === "IN_PROGRESS" ? "warning" : "secondary"} className="text-[9px] px-1 py-0">
+                                    <Badge variant={task.status === "COMPLETED" ? "success" : task.status === "MISSED" ? "destructive" : task.status === "IN_PROGRESS" ? "warning" : "secondary"} className="text-[9px] px-1 py-0">
                                       {task.status.replace("_", " ").toLowerCase()}
                                     </Badge>
                                   </div>
@@ -1932,6 +2107,8 @@ export default function DashboardPage() {
                               >
                                 {task.status === "COMPLETED" ? (
                                   <CheckCircle2 className="h-5 w-5 text-indigo-500" />
+                                ) : task.status === "MISSED" ? (
+                                  <AlertTriangle className="h-5 w-5 text-red-400" />
                                 ) : task.status === "IN_PROGRESS" ? (
                                   <Clock className="h-5 w-5 text-purple-400" />
                                 ) : (
@@ -1951,6 +2128,17 @@ export default function DashboardPage() {
                                   <Badge variant={task.priority === "HIGH" ? "destructive" : task.priority === "MEDIUM" ? "warning" : "secondary"} className="text-[9px] uppercase tracking-wider px-1.5 py-0">
                                     {task.priority.toLowerCase()}
                                   </Badge>
+                                  <select
+                                    value={task.status}
+                                    onChange={(event) => handleSetTaskStatus(task.id, event.target.value as Task["status"])}
+                                    className="rounded border border-zinc-800 bg-zinc-950 px-1.5 py-1 text-[9px] font-semibold text-zinc-300 focus:outline-none focus:ring-1 focus:ring-zinc-600"
+                                    title="Change task status"
+                                  >
+                                    <option value="PENDING">Pending</option>
+                                    <option value="IN_PROGRESS">In progress</option>
+                                    <option value="MISSED">Missed</option>
+                                    <option value="COMPLETED">Completed</option>
+                                  </select>
                                 </div>
                                 
                                 <p className="text-xs text-zinc-400/90 mt-1 max-w-lg leading-relaxed">{task.description}</p>
@@ -2375,10 +2563,13 @@ export default function DashboardPage() {
               <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block">Consistency Rank</span>
               <span className="text-lg font-bold text-zinc-100 mt-1 block">Elite Partner</span>
             </Card>
-            <Card className="p-4 border-zinc-900 bg-zinc-950/40 text-center">
+            <Card
+              className="p-4 border-zinc-900 bg-zinc-950/40 text-center cursor-pointer hover:border-amber-800/60 transition-colors"
+              onClick={() => setIsStreakCalendarOpen(true)}
+            >
               <Flame className="mx-auto h-5 w-5 text-amber-500 mb-2" />
               <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block">Streak Record</span>
-              <span className="text-lg font-bold text-zinc-100 mt-1 block">14 days</span>
+              <span className="text-lg font-bold text-zinc-100 mt-1 block">{profileStats?.streakDays ?? 0} days</span>
             </Card>
             <Card className="p-4 border-zinc-900 bg-zinc-950/40 text-center">
               <CheckCircle2 className="mx-auto h-5 w-5 text-emerald-400 mb-2" />
@@ -2386,6 +2577,8 @@ export default function DashboardPage() {
               <span className="text-lg font-bold text-zinc-100 mt-1 block">{stats.completedTasks} tasks</span>
             </Card>
           </div>
+
+          {renderStreakCalendar(profileStats?.streakDates || [], profileStats?.missedDates || [])}
 
           {/* Modal Overlay: Edit Profile Bio */}
           <Modal

@@ -3,6 +3,18 @@ import { Workspace } from '../models/Workspace';
 import { Task } from '../models/Task';
 import { PartnerRelation, PartnerMode, PartnerStatus } from '../models/PartnerRelation';
 
+const getMutualPartnerIds = async (userId: string) => {
+  const mutualRelations = await PartnerRelation.find({
+    status: PartnerStatus.ACCEPTED,
+    mode: PartnerMode.MUTUAL,
+    $or: [{ senderId: userId }, { receiverId: userId }]
+  });
+
+  return mutualRelations.map(r =>
+    r.senderId.toString() === userId ? r.receiverId : r.senderId
+  );
+};
+
 // Fetch all workspaces for the logged-in user. Seed defaults if empty.
 export const getWorkspaces = async (req: any, res: Response) => {
   if (!req.user) {
@@ -27,16 +39,13 @@ export const getWorkspaces = async (req: any, res: Response) => {
       });
     }
 
-    // Find mutual partners
-    const mutualRelations = await PartnerRelation.find({
-      status: PartnerStatus.ACCEPTED,
-      mode: PartnerMode.MUTUAL,
-      $or: [{ senderId: userId }, { receiverId: userId }]
-    });
-
-    const mutualPartnerIds = mutualRelations.map(r => 
-      r.senderId.toString() === userId ? r.receiverId : r.senderId
-    );
+    const mutualPartnerIds = await getMutualPartnerIds(userId);
+    if (mutualPartnerIds.length > 0) {
+      await Workspace.updateMany(
+        { userId },
+        { $addToSet: { collaboratorIds: { $each: mutualPartnerIds } } }
+      );
+    }
 
     // Fetch workspaces for user + workspaces where they are added as collaborator
     const workspaces = await Workspace.find({
@@ -81,8 +90,14 @@ export const createWorkspace = async (req: any, res: Response) => {
     const workspace = await Workspace.create({
       name: nameTrimmed,
       userId: req.user.userId,
-      isDefault: false
+      isDefault: false,
+      collaboratorIds: await getMutualPartnerIds(req.user.userId)
     });
+
+    await workspace.populate([
+      { path: 'userId', select: 'id username name image' },
+      { path: 'collaboratorIds', select: 'id username name image' }
+    ]);
 
     return res.status(201).json({
       message: "Workspace created successfully",
@@ -181,13 +196,16 @@ export const restoreDefaultWorkspaces = async (req: any, res: Response) => {
     const existingWork = await Workspace.findOne({ name: "Work", userId });
 
     if (!existingPersonal) {
-      await Workspace.create({ name: "Personal", userId, isDefault: true });
+      await Workspace.create({ name: "Personal", userId, isDefault: true, collaboratorIds: await getMutualPartnerIds(userId) });
     }
     if (!existingWork) {
-      await Workspace.create({ name: "Work", userId, isDefault: true });
+      await Workspace.create({ name: "Work", userId, isDefault: true, collaboratorIds: await getMutualPartnerIds(userId) });
     }
 
-    const allWorkspaces = await Workspace.find({ userId }).sort({ createdAt: 1 });
+    const allWorkspaces = await Workspace.find({ userId })
+      .populate('userId', 'id username name image')
+      .populate('collaboratorIds', 'id username name image')
+      .sort({ createdAt: 1 });
 
     return res.status(200).json({
       message: "Default workspaces restored successfully.",

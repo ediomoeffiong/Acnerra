@@ -64,6 +64,12 @@ export const createCheckIn = async (req: any, res: Response) => {
     if (parsed.data.status === CheckInStatus.COMPLETED) {
       task.status = TaskStatus.COMPLETED;
       await task.save();
+    } else if (parsed.data.status === CheckInStatus.MISSED) {
+      task.status = TaskStatus.MISSED;
+      await task.save();
+    } else if (task.status !== TaskStatus.COMPLETED) {
+      task.status = TaskStatus.IN_PROGRESS;
+      await task.save();
     }
 
     const otherParticipantIds = getTaskParticipantIds(task).filter((id) => id !== req.user.userId);

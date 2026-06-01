@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import { z } from 'zod';
 import { User } from '../models/User';
 import { Task, TaskStatus } from '../models/Task';
+import { PartnerRelation, PartnerStatus } from '../models/PartnerRelation';
+import { calculateUserStreak } from '../lib/streak';
 
 const ProfileUpdateSchema = z.object({
   username: z.string()
@@ -30,6 +32,11 @@ export const getProfileByUsername = async (req: Request, res: Response) => {
     // Fetch real metrics from DB
     const completedTasksCount = await Task.countDocuments({ creatorId: user._id, status: TaskStatus.COMPLETED });
     const totalTasksCount = await Task.countDocuments({ creatorId: user._id });
+    const streak = await calculateUserStreak(user._id.toString());
+    const partnersCount = await PartnerRelation.countDocuments({
+      status: PartnerStatus.ACCEPTED,
+      $or: [{ senderId: user._id }, { receiverId: user._id }]
+    });
 
     return res.status(200).json({
       user: {
@@ -43,8 +50,11 @@ export const getProfileByUsername = async (req: Request, res: Response) => {
       stats: {
         completedTasks: completedTasksCount,
         totalTasks: totalTasksCount,
-        streakDays: Math.min(14, completedTasksCount * 2), // Mock/realistic stats since we don't build analytics
-        consistencyRank: completedTasksCount >= 5 ? "Elite Partner" : "Active Partner"
+        streakDays: streak.streakDays,
+        streakDates: streak.streakDates,
+        missedDates: streak.missedDates,
+        partnersCount,
+        consistencyRank: streak.streakDays >= 14 || completedTasksCount >= 10 ? "Elite Partner" : completedTasksCount >= 5 ? "Active Partner" : "Growing Partner"
       }
     });
   } catch (error) {
