@@ -4,7 +4,8 @@ export enum InviteStatus {
   PENDING = 'PENDING',
   ACCEPTED = 'ACCEPTED',
   DECLINED = 'DECLINED',
-  EXPIRED = 'EXPIRED'
+  EXPIRED = 'EXPIRED',
+  CANCELLED = 'CANCELLED'
 }
 
 const InviteSchema = new Schema({

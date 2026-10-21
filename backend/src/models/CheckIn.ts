@@ -6,11 +6,17 @@ export enum CheckInStatus {
   MISSED = 'MISSED'
 }
 
+export enum CheckInKind {
+  OWNER_PROGRESS = 'OWNER_PROGRESS',
+  PARTNER_FEEDBACK = 'PARTNER_FEEDBACK'
+}
+
 const CheckInSchema = new Schema({
   notes: { type: String, trim: true, default: '' },
   status: { type: String, enum: Object.values(CheckInStatus), required: true },
   taskId: { type: Schema.Types.ObjectId, ref: 'Task', required: true },
   userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  kind: { type: String, enum: Object.values(CheckInKind), default: null },
 }, { timestamps: true });
 
 CheckInSchema.virtual('id').get(function() {

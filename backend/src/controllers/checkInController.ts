@@ -1,9 +1,9 @@
 import { Response } from 'express';
 import { z } from 'zod';
-import { CheckIn, CheckInStatus } from '../models/CheckIn';
+import { CheckIn, CheckInKind, CheckInStatus } from '../models/CheckIn';
 import { Task, TaskStatus } from '../models/Task';
 import { createNotification } from '../lib/notifications';
-import { canAccessTask, getTaskParticipantIds } from '../lib/taskAccess';
+import { getTaskPermissions, getTaskParticipantIds } from '../lib/taskAccess';
 
 const CheckInCreateSchema = z.object({
   status: z.nativeEnum(CheckInStatus),
@@ -17,7 +17,7 @@ export const listCheckIns = async (req: any, res: Response) => {
     const task = await Task.findById(req.params.taskId);
     if (!task) return res.status(404).json({ message: 'Task not found.' });
 
-    if (!canAccessTask(task, req.user.userId)) {
+    if (!(await getTaskPermissions(task, req.user.userId)).canView) {
       return res.status(403).json({ message: 'You do not have permission to view check-ins for this task.' });
     }
 
@@ -44,14 +44,13 @@ export const createCheckIn = async (req: any, res: Response) => {
     const task = await Task.findById(req.params.taskId);
     if (!task) return res.status(404).json({ message: 'Task not found.' });
 
-    if (!canAccessTask(task, req.user.userId)) {
+    const permissions = await getTaskPermissions(task, req.user.userId);
+    if (!permissions.canComment) {
       return res.status(403).json({ message: 'Only task collaborators can submit check-ins.' });
     }
 
-    if (parsed.data.status === CheckInStatus.COMPLETED) {
-      if (task.creatorId.toString() !== req.user.userId) {
-        return res.status(403).json({ message: 'Only the creator of the task can verify it as completed.' });
-      }
+    if (!permissions.isOwner && parsed.data.status === CheckInStatus.COMPLETED) {
+      return res.status(403).json({ message: 'Only the task owner can mark this task completed.' });
     }
 
     const checkIn = await CheckIn.create({
@@ -59,15 +58,17 @@ export const createCheckIn = async (req: any, res: Response) => {
       userId: req.user.userId,
       status: parsed.data.status,
       notes: parsed.data.notes,
+      kind: permissions.isOwner ? CheckInKind.OWNER_PROGRESS : CheckInKind.PARTNER_FEEDBACK,
     });
 
-    if (parsed.data.status === CheckInStatus.COMPLETED) {
+    // A monitor's record is feedback only and never mutates owner progress.
+    if (permissions.isOwner && parsed.data.status === CheckInStatus.COMPLETED) {
       task.status = TaskStatus.COMPLETED;
       await task.save();
-    } else if (parsed.data.status === CheckInStatus.MISSED) {
+    } else if (permissions.isOwner && parsed.data.status === CheckInStatus.MISSED) {
       task.status = TaskStatus.MISSED;
       await task.save();
-    } else if (task.status !== TaskStatus.COMPLETED) {
+    } else if (permissions.isOwner && task.status !== TaskStatus.COMPLETED) {
       task.status = TaskStatus.IN_PROGRESS;
       await task.save();
     }
@@ -77,7 +78,9 @@ export const createCheckIn = async (req: any, res: Response) => {
       userId,
       type: 'CHECK_IN_SUBMITTED',
       title: 'New check-in',
-      message: `A collaborator posted a ${parsed.data.status.toLowerCase().replace('_', ' ')} check-in on "${task.title}".`,
+      message: permissions.isOwner
+        ? `The owner posted a ${parsed.data.status.toLowerCase().replace('_', ' ')} progress update on "${task.title}".`
+        : `An accountability partner left feedback on "${task.title}".`,
       taskId: task._id,
     })));
 

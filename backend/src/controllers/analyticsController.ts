@@ -1,5 +1,5 @@
 import { Response } from 'express';
-import { CheckIn, CheckInStatus } from '../models/CheckIn';
+import { CheckIn, CheckInKind, CheckInStatus } from '../models/CheckIn';
 import { Task, TaskStatus } from '../models/Task';
 import { Workspace } from '../models/Workspace';
 import { PartnerRelation, PartnerMode, PartnerStatus } from '../models/PartnerRelation';
@@ -27,13 +27,8 @@ export const getAnalytics = async (req: any, res: Response) => {
   try {
     const tasks = await Task.find({
       $or: [
-        { creatorId: userId },
-        { 
-          $and: [
-            { isPrivate: { $ne: true } },
-            { $or: [{ partnerId: userId }, { collaboratorIds: userId }] }
-          ]
-        }
+        { ownerId: userId },
+        { ownerId: null, creatorId: userId },
       ],
       createdAt: { $lte: end },
     });
@@ -42,6 +37,10 @@ export const getAnalytics = async (req: any, res: Response) => {
     const checkIns = await CheckIn.find({
       taskId: { $in: taskIds },
       createdAt: { $gte: start, $lte: end },
+      $or: [
+        { kind: CheckInKind.OWNER_PROGRESS },
+        { kind: null, userId },
+      ],
     }).sort({ createdAt: 1 });
 
     const completedTasks = tasks.filter((task) => task.status === TaskStatus.COMPLETED).length;
@@ -55,24 +54,21 @@ export const getAnalytics = async (req: any, res: Response) => {
       return acc;
     }, {});
 
-    // Find mutual partners to query workspaces
-    const mutualRelations = await PartnerRelation.find({
-      status: PartnerStatus.ACCEPTED,
-      mode: PartnerMode.MUTUAL,
-      $or: [{ senderId: userId }, { receiverId: userId }]
-    });
-
-    const mutualPartnerIds = mutualRelations.map(r => 
-      r.senderId.toString() === userId ? r.receiverId : r.senderId
-    );
-
-    // Fetch workspaces for user + mutual partners
-    const workspacesList = await Workspace.find({
+    // Match the workspace endpoint: show owned workspaces and workspaces explicitly shared with this user.
+    const rawWorkspacesList = await Workspace.find({
       $or: [
         { userId },
-        { userId: { $in: mutualPartnerIds } }
+        { collaboratorIds: userId }
       ]
-    }).populate('userId', 'id username name');
+    })
+      .populate('userId', 'id username name')
+      .sort({ createdAt: 1 });
+
+    const workspaceMap = new Map<string, any>();
+    rawWorkspacesList.forEach((workspace) => {
+      workspaceMap.set(workspace._id.toString(), workspace);
+    });
+    const workspacesList = Array.from(workspaceMap.values());
 
     // Calculate workspace metrics
     const workspaceStats = workspacesList.map(ws => {

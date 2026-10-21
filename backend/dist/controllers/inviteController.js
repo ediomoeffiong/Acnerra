@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.declineInvite = exports.acceptInvite = exports.sendInvite = exports.listInvites = void 0;
+exports.declineInvite = exports.cancelInvite = exports.acceptInvite = exports.sendInvite = exports.listInvites = void 0;
 const zod_1 = require("zod");
 const Invite_1 = require("../models/Invite");
 const Task_1 = require("../models/Task");
@@ -11,10 +11,11 @@ const InviteCreateSchema = zod_1.z.object({
     username: zod_1.z.string().min(3, 'Username is required').max(20).trim(),
     taskId: zod_1.z.string().min(1, 'Task is required'),
 });
+const escapeRegex = (value) => value.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
 const populateInvite = [
     { path: 'senderId', select: 'username name image' },
     { path: 'receiverId', select: 'username name image' },
-    { path: 'taskId', select: 'title status dueDate' },
+    { path: 'taskId', select: 'title status dueDate ownerId creatorId visibility' },
 ];
 const isExpired = (invite) => invite.expiresAt && new Date(invite.expiresAt).getTime() < Date.now();
 const listInvites = async (req, res) => {
@@ -45,7 +46,7 @@ const sendInvite = async (req, res) => {
     const { username, taskId } = parsed.data;
     try {
         const [receiver, task] = await Promise.all([
-            User_1.User.findOne({ username: { $regex: new RegExp(`^${username}$`, 'i') } }),
+            User_1.User.findOne({ username: { $regex: new RegExp(`^${escapeRegex(username)}$`, 'i') } }),
             Task_1.Task.findById(taskId),
         ]);
         if (!receiver) {
@@ -60,8 +61,11 @@ const sendInvite = async (req, res) => {
         if (!(0, taskAccess_1.isTaskCreator)(task, req.user.userId)) {
             return res.status(403).json({ message: 'Only the task creator can invite collaborators.' });
         }
-        if ((0, taskAccess_1.canAccessTask)(task, receiver._id.toString())) {
+        if (await (0, taskAccess_1.canAccessTask)(task, receiver._id.toString())) {
             return res.status(409).json({ message: 'That user is already a collaborator on this task.' });
+        }
+        if (!await (0, taskAccess_1.canRelationshipMonitor)(req.user.userId, receiver._id.toString())) {
+            return res.status(400).json({ message: 'Task access can only be offered to an accepted, eligible accountability partner.' });
         }
         await Invite_1.Invite.updateMany({
             senderId: req.user.userId,
@@ -88,7 +92,7 @@ const sendInvite = async (req, res) => {
             userId: receiver._id,
             type: 'INVITE_RECEIVED',
             title: 'New accountability invite',
-            message: `You were invited to collaborate on "${task.title}".`,
+            message: `@${req.user.username || 'The owner'} invited you to monitor "${task.title}". You may view and comment, but only the owner can edit or complete it.`,
             taskId,
             inviteId: invite._id,
         });
@@ -129,11 +133,17 @@ const acceptInvite = async (req, res) => {
         if (!task)
             return res.status(404).json({ message: 'The invited task no longer exists.' });
         const receiverId = (0, taskAccess_1.getIdString)(invite.receiverId);
-        if (receiverId && !(0, taskAccess_1.canAccessTask)(task, receiverId)) {
+        if (!receiverId || !await (0, taskAccess_1.canRelationshipMonitor)(task.creatorId.toString(), receiverId)) {
+            return res.status(403).json({ message: 'This accountability relationship is no longer active.' });
+        }
+        if (!await (0, taskAccess_1.canAccessTask)(task, receiverId)) {
             if (!task.partnerId) {
                 task.partnerId = invite.receiverId;
             }
             task.collaboratorIds = Array.from(new Set([...(task.collaboratorIds || []).map((id) => id.toString()), receiverId])).map((id) => id);
+            task.sharedWithIds = Array.from(new Set([...(task.sharedWithIds || []).map((id) => id.toString()), receiverId])).map((id) => id);
+            task.visibility = Task_1.TaskVisibility.SELECTED_PARTNERS;
+            task.isPrivate = false;
             await task.save();
         }
         invite.status = Invite_1.InviteStatus.ACCEPTED;
@@ -165,6 +175,28 @@ const acceptInvite = async (req, res) => {
     }
 };
 exports.acceptInvite = acceptInvite;
+const cancelInvite = async (req, res) => {
+    if (!req.user)
+        return res.status(401).json({ message: 'Not authenticated' });
+    try {
+        const invite = await Invite_1.Invite.findById(req.params.id);
+        if (!invite)
+            return res.status(404).json({ message: 'Invite not found.' });
+        if ((0, taskAccess_1.getIdString)(invite.senderId) !== req.user.userId)
+            return res.status(403).json({ message: 'Only the sender can cancel this invite.' });
+        if (invite.status !== Invite_1.InviteStatus.PENDING)
+            return res.status(409).json({ message: 'Only pending invites can be cancelled.' });
+        invite.status = Invite_1.InviteStatus.CANCELLED;
+        invite.respondedAt = new Date();
+        await invite.save();
+        return res.status(200).json({ message: 'Invite cancelled.', invite: invite.toJSON() });
+    }
+    catch (error) {
+        console.error('Cancel invite error:', error);
+        return res.status(500).json({ message: 'An error occurred while cancelling the invite.' });
+    }
+};
+exports.cancelInvite = cancelInvite;
 const declineInvite = async (req, res) => {
     if (!req.user)
         return res.status(401).json({ message: 'Not authenticated' });

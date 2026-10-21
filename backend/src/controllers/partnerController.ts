@@ -4,12 +4,13 @@ import { PartnerRelation, PartnerMode, PartnerStatus } from '../models/PartnerRe
 import { User } from '../models/User';
 import { createNotification } from '../lib/notifications';
 import { Notification } from '../models/Notification';
-import { Workspace } from '../models/Workspace';
+import { Task, TaskVisibility } from '../models/Task';
 
 const PartnerInviteSchema = z.object({
   username: z.string().min(3, "Username must be at least 3 characters").max(20).trim(),
   mode: z.nativeEnum(PartnerMode),
 });
+const escapeRegex = (value: string) => value.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
 
 export const getPartners = async (req: any, res: Response) => {
   if (!req.user) return res.status(401).json({ message: 'Not authenticated' });
@@ -44,40 +45,13 @@ export const sendPartnerInvite = async (req: any, res: Response) => {
   const senderId = req.user.userId;
 
   try {
-    const receiver = await User.findOne({ username: { $regex: new RegExp(`^${username}$`, 'i') } });
+    const receiver = await User.findOne({ username: { $regex: new RegExp(`^${escapeRegex(username)}$`, 'i') } });
     if (!receiver) {
       return res.status(404).json({ message: 'No user found with that username.' });
     }
 
     if (receiver._id.toString() === senderId) {
       return res.status(400).json({ message: 'You cannot invite yourself as a partner.' });
-    }
-
-    // Check partner limits for sender
-    if (mode === PartnerMode.MUTUAL) {
-      const mutualCount = await PartnerRelation.countDocuments({
-        status: PartnerStatus.ACCEPTED,
-        mode: PartnerMode.MUTUAL,
-        $or: [{ senderId }, { receiverId: senderId }]
-      });
-      if (mutualCount >= 3) {
-        return res.status(400).json({
-          message: "You've exceeded the partner limit. Remove a dormant partner to add another."
-        });
-      }
-    } else if (mode === PartnerMode.SINGLE) {
-      // Single partners are those that the sender invites to monitor the sender's tasks.
-      // So senderId is the user whose tasks are monitored.
-      const singleCount = await PartnerRelation.countDocuments({
-        status: PartnerStatus.ACCEPTED,
-        mode: PartnerMode.SINGLE,
-        senderId
-      });
-      if (singleCount >= 4) {
-        return res.status(400).json({
-          message: "You've exceeded the partner limit. Remove a dormant partner to add another."
-        });
-      }
     }
 
     // Check if an active/pending relationship already exists between the two users
@@ -106,9 +80,9 @@ export const sendPartnerInvite = async (req: any, res: Response) => {
 
     // Create notification for receiver
     const modeLabel = mode === PartnerMode.MUTUAL ? 'Mutual Partner' : 'Single Partner';
-    const explanation = mode === PartnerMode.MUTUAL 
-      ? 'you both monitor each other\'s tasks and share workspaces' 
-      : 'they monitor your tasks (read-only monitoring)';
+    const explanation = mode === PartnerMode.MUTUAL
+      ? 'you can support each other, but only on tasks each person explicitly shares'
+      : `you are being asked to monitor @${(await User.findById(senderId).select('username'))?.username || 'this user'}; their private tasks remain private`;
 
     await createNotification({
       userId: receiver._id,
@@ -152,43 +126,6 @@ export const acceptPartnerInvite = async (req: any, res: Response) => {
       return res.status(400).json({ message: `This invitation has already been ${relation.status.toLowerCase()}.` });
     }
 
-    // Check partner limits for BOTH users before accepting
-    if (relation.mode === PartnerMode.MUTUAL) {
-      const receiverMutualCount = await PartnerRelation.countDocuments({
-        status: PartnerStatus.ACCEPTED,
-        mode: PartnerMode.MUTUAL,
-        $or: [{ senderId: relation.receiverId }, { receiverId: relation.receiverId }]
-      });
-      if (receiverMutualCount >= 3) {
-        return res.status(400).json({
-          message: "You've exceeded the partner limit. Remove a dormant partner to add another."
-        });
-      }
-
-      const senderMutualCount = await PartnerRelation.countDocuments({
-        status: PartnerStatus.ACCEPTED,
-        mode: PartnerMode.MUTUAL,
-        $or: [{ senderId: relation.senderId }, { receiverId: relation.senderId }]
-      });
-      if (senderMutualCount >= 3) {
-        return res.status(400).json({
-          message: "The inviter has exceeded their mutual partner limit. They cannot accept more partners."
-        });
-      }
-    } else if (relation.mode === PartnerMode.SINGLE) {
-      // For SINGLE, sender is the monitored user, receiver is the monitoring user.
-      const senderSingleCount = await PartnerRelation.countDocuments({
-        status: PartnerStatus.ACCEPTED,
-        mode: PartnerMode.SINGLE,
-        senderId: relation.senderId
-      });
-      if (senderSingleCount >= 4) {
-        return res.status(400).json({
-          message: "The inviter has exceeded their single partner limit. They cannot have more single partners."
-        });
-      }
-    }
-
     // Accept relation
     relation.status = PartnerStatus.ACCEPTED;
     relation.respondedAt = new Date();
@@ -210,16 +147,6 @@ export const acceptPartnerInvite = async (req: any, res: Response) => {
         if (!receiver.accountabilityPartners.includes(sender._id as any)) {
           receiver.accountabilityPartners.push(sender._id as any);
         }
-        await Promise.all([
-          Workspace.updateMany(
-            { userId: sender._id },
-            { $addToSet: { collaboratorIds: receiver._id } }
-          ),
-          Workspace.updateMany(
-            { userId: receiver._id },
-            { $addToSet: { collaboratorIds: sender._id } }
-          )
-        ]);
       } else if (relation.mode === PartnerMode.SINGLE) {
         // Single: receiver monitors sender
         if (!sender.accountabilityPartners.includes(receiver._id as any)) {
@@ -310,7 +237,7 @@ export const removePartner = async (req: any, res: Response) => {
     // Find the accepted relationship
     const relation = await PartnerRelation.findOne({
       _id: partnerId,
-      status: PartnerStatus.ACCEPTED,
+      status: { $in: [PartnerStatus.PENDING, PartnerStatus.ACCEPTED] },
       $or: [{ senderId: userId }, { receiverId: userId }]
     });
 
@@ -318,7 +245,9 @@ export const removePartner = async (req: any, res: Response) => {
       return res.status(404).json({ message: 'Partner relationship not found.' });
     }
 
-    const otherUserId = relation.senderId.toString() === userId ? relation.receiverId : relation.senderId;
+    if (relation.status === PartnerStatus.PENDING && relation.senderId.toString() !== userId) {
+      return res.status(403).json({ message: 'Only the sender can cancel a pending invitation.' });
+    }
 
     // Pull from users' accountabilityPartners arrays
     const sender = await User.findById(relation.senderId);
@@ -335,11 +264,34 @@ export const removePartner = async (req: any, res: Response) => {
       await receiver.save();
     }
 
-    // Delete relation
-    await relation.deleteOne();
+    if (relation.status === PartnerStatus.ACCEPTED) {
+      const senderId = relation.senderId.toString();
+      const receiverId = relation.receiverId.toString();
+      await Task.updateMany(
+        { $or: [{ ownerId: senderId }, { ownerId: null, creatorId: senderId }] },
+        { $pull: { sharedWithIds: receiverId, collaboratorIds: receiverId }, $set: { partnerId: null } }
+      );
+      if (relation.mode === PartnerMode.MUTUAL) {
+        await Task.updateMany(
+          { $or: [{ ownerId: receiverId }, { ownerId: null, creatorId: receiverId }] },
+          { $pull: { sharedWithIds: senderId, collaboratorIds: senderId }, $set: { partnerId: null } }
+        );
+      }
+      await Task.updateMany(
+        { visibility: TaskVisibility.SELECTED_PARTNERS, sharedWithIds: { $size: 0 } },
+        { $set: { visibility: TaskVisibility.PRIVATE, isPrivate: true } }
+      );
+      relation.status = PartnerStatus.TERMINATED;
+      relation.terminatedAt = new Date();
+      relation.terminatedBy = userId as any;
+    } else {
+      relation.status = PartnerStatus.CANCELLED;
+      relation.respondedAt = new Date();
+    }
+    await relation.save();
 
     return res.status(200).json({
-      message: 'Partner relationship removed successfully.',
+      message: relation.status === PartnerStatus.TERMINATED ? 'Partner relationship ended and relationship-derived task access revoked.' : 'Partner invitation cancelled.',
       partnerId
     });
   } catch (error) {

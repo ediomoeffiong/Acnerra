@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CheckIn = exports.CheckInStatus = void 0;
+exports.CheckIn = exports.CheckInKind = exports.CheckInStatus = void 0;
 const mongoose_1 = require("mongoose");
 var CheckInStatus;
 (function (CheckInStatus) {
@@ -8,11 +8,17 @@ var CheckInStatus;
     CheckInStatus["IN_PROGRESS"] = "IN_PROGRESS";
     CheckInStatus["MISSED"] = "MISSED";
 })(CheckInStatus || (exports.CheckInStatus = CheckInStatus = {}));
+var CheckInKind;
+(function (CheckInKind) {
+    CheckInKind["OWNER_PROGRESS"] = "OWNER_PROGRESS";
+    CheckInKind["PARTNER_FEEDBACK"] = "PARTNER_FEEDBACK";
+})(CheckInKind || (exports.CheckInKind = CheckInKind = {}));
 const CheckInSchema = new mongoose_1.Schema({
     notes: { type: String, trim: true, default: '' },
     status: { type: String, enum: Object.values(CheckInStatus), required: true },
     taskId: { type: mongoose_1.Schema.Types.ObjectId, ref: 'Task', required: true },
     userId: { type: mongoose_1.Schema.Types.ObjectId, ref: 'User', required: true },
+    kind: { type: String, enum: Object.values(CheckInKind), default: null },
 }, { timestamps: true });
 CheckInSchema.virtual('id').get(function () {
     return this._id.toHexString();

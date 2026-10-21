@@ -2,6 +2,7 @@ import api from './api';
 
 export type TaskStatus = 'PENDING' | 'IN_PROGRESS' | 'MISSED' | 'COMPLETED';
 export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH';
+export type TaskVisibility = 'PRIVATE' | 'SELECTED_PARTNERS' | 'WORKSPACE';
 
 export interface Task {
   id: string;
@@ -11,8 +12,13 @@ export interface Task {
   priority: TaskPriority;
   dueDate: string | null;
   creatorId: string | UserSummary;
+  ownerId?: string | UserSummary;
   partnerId?: string | UserSummary | null;
   collaboratorIds?: UserSummary[];
+  sharedWithIds?: UserSummary[];
+  visibility?: TaskVisibility;
+  role?: 'OWNER' | 'MONITOR';
+  permissions?: { isOwner: boolean; canView: boolean; canComment: boolean; canManage: boolean; role: 'OWNER' | 'MONITOR' | 'NONE' };
   isPrivate?: boolean;
   workspaceId?: string | null;
   createdAt: string;
@@ -33,6 +39,8 @@ export interface CreateTaskInput {
   priority?: TaskPriority;
   dueDate?: string | null;
   isPrivate?: boolean;
+  visibility?: TaskVisibility;
+  sharedWithIds?: string[];
   workspaceId?: string | null;
 }
 
@@ -44,6 +52,8 @@ export interface UpdateTaskInput {
   dueDate?: string | null;
   partnerId?: string | null;
   isPrivate?: boolean;
+  visibility?: TaskVisibility;
+  sharedWithIds?: string[];
   workspaceId?: string | null;
 }
 
@@ -72,6 +82,8 @@ export interface CheckInReminder {
 export interface DashboardData {
   stats: DashboardStats;
   allTasks: Task[];
+  myTasks?: Task[];
+  monitoringTasks?: Task[];
   overdueTasks: Task[];
   upcomingDeadlines: Task[];
   sharedTasks: Task[];

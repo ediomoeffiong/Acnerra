@@ -1,612 +1,320 @@
-import { Request, Response } from 'express';
+import { Response } from 'express';
 import { z } from 'zod';
-import { Task, TaskStatus, TaskPriority } from '../models/Task';
+import { Task, TaskPriority, TaskStatus, TaskVisibility } from '../models/Task';
 import { CheckIn } from '../models/CheckIn';
-import { User } from '../models/User';
+import { Workspace } from '../models/Workspace';
 import { createNotification } from '../lib/notifications';
-import { canAccessTask, getIdString, getTaskParticipantIds, isTaskCreator } from '../lib/taskAccess';
+import {
+  getEligibleMonitorIds,
+  getExplicitMonitorIds,
+  getIdString,
+  getTaskOwnerId,
+  getTaskParticipantIds,
+  getTaskPermissions,
+} from '../lib/taskAccess';
 
-// Zod schemas for validation
+const objectIdString = z.string().regex(/^[a-f\d]{24}$/i, 'Invalid ID');
+const dueDateField = z.string().nullable().optional().transform((value, ctx) => {
+  if (value === undefined || value === null || value === '') return value === undefined ? undefined : null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    ctx.addIssue({ code: 'custom', message: 'Invalid due date' });
+    return z.NEVER;
+  }
+  return parsed;
+});
+
 const TaskCreateSchema = z.object({
-  title: z.string().min(1, "Title is required").max(100, "Title is too long").trim(),
-  description: z.string().max(1000, "Description is too long").trim().optional().default(''),
+  title: z.string().min(1, 'Title is required').max(100).trim(),
+  description: z.string().max(1000).trim().optional().default(''),
   status: z.nativeEnum(TaskStatus).optional().default(TaskStatus.PENDING),
   priority: z.nativeEnum(TaskPriority).optional().default(TaskPriority.MEDIUM),
-  dueDate: z.string().nullable().optional().transform(val => {
-    if (!val) return null;
-    const parsed = new Date(val);
-    return isNaN(parsed.getTime()) ? null : parsed;
-  }),
-  partnerId: z.string().nullable().optional(),
-  isPrivate: z.boolean().optional().default(false),
-  workspaceId: z.string().nullable().optional(),
-});
+  dueDate: dueDateField,
+  workspaceId: objectIdString.nullable().optional(),
+  visibility: z.nativeEnum(TaskVisibility).optional().default(TaskVisibility.PRIVATE),
+  sharedWithIds: z.array(objectIdString).max(100).optional().default([]),
+  // Accepted for old clients, but never used to infer broad sharing.
+  isPrivate: z.boolean().optional(),
+  partnerId: z.null().optional(),
+  collaboratorIds: z.array(objectIdString).max(100).optional(),
+}).strict();
 
 const TaskUpdateSchema = z.object({
-  title: z.string().min(1, "Title cannot be empty").max(100, "Title is too long").trim().optional(),
-  description: z.string().max(1000, "Description is too long").trim().optional(),
+  title: z.string().min(1).max(100).trim().optional(),
+  description: z.string().max(1000).trim().optional(),
   status: z.nativeEnum(TaskStatus).optional(),
   priority: z.nativeEnum(TaskPriority).optional(),
-  dueDate: z.string().nullable().optional().transform(val => {
-    if (val === undefined) return undefined;
-    if (!val) return null;
-    const parsed = new Date(val);
-    return isNaN(parsed.getTime()) ? null : parsed;
-  }),
-  partnerId: z.string().nullable().optional(),
+  dueDate: dueDateField,
+  workspaceId: objectIdString.nullable().optional(),
+  visibility: z.nativeEnum(TaskVisibility).optional(),
+  sharedWithIds: z.array(objectIdString).max(100).optional(),
   isPrivate: z.boolean().optional(),
-  workspaceId: z.string().nullable().optional(),
+  partnerId: z.null().optional(),
+}).strict();
+
+const taskPopulate = [
+  { path: 'ownerId', select: 'username name image' },
+  { path: 'creatorId', select: 'username name image' },
+  { path: 'partnerId', select: 'username name image' },
+  { path: 'collaboratorIds', select: 'username name image' },
+  { path: 'sharedWithIds', select: 'username name image' },
+];
+
+const taskCandidateQuery = (userId: string) => ({
+  $or: [
+    { ownerId: userId },
+    { ownerId: null, creatorId: userId },
+    { sharedWithIds: userId },
+    { partnerId: userId },
+    { collaboratorIds: userId },
+    { visibility: TaskVisibility.WORKSPACE },
+  ],
 });
 
-// Helper for ownership validation (both creator and partner have access)
-const checkOwnership = (task: any, req: any): boolean => {
-  if (!task || !req.user) return false;
-  return canAccessTask(task, req.user.userId);
+const validateFutureDueDate = (date?: Date | null) => !date || date.getTime() > Date.now();
+
+const validateOwnedWorkspace = async (workspaceId: string | null | undefined, ownerId: string) => {
+  if (!workspaceId) return true;
+  return Boolean(await Workspace.exists({ _id: workspaceId, userId: ownerId }));
 };
 
-// Helper for strict creator validation (only the owner can delete)
-const checkCreator = (task: any, req: any): boolean => {
-  if (!task || !req.user) return false;
-  return isTaskCreator(task, req.user.userId);
+const validateSharedMonitors = async (ownerId: string, requested: string[]) => {
+  const unique = Array.from(new Set(requested)).filter((id) => id !== ownerId);
+  const eligible = new Set(await getEligibleMonitorIds(ownerId));
+  return { valid: unique.every((id) => eligible.has(id)), ids: unique };
 };
 
-// Create a new task
+const serializeTask = (task: any, permissions: any) => ({
+  ...task.toJSON(),
+  permissions,
+  role: permissions.role,
+});
+
 export const createTask = async (req: any, res: Response) => {
-  if (!req.user) {
-    return res.status(401).json({ message: "Not authenticated" });
-  }
-
-  const validatedFields = TaskCreateSchema.safeParse(req.body);
-
-  if (!validatedFields.success) {
-    return res.status(400).json({
-      errors: validatedFields.error.flatten().fieldErrors,
-    });
-  }
-
-  const { title, description, status, priority, dueDate, partnerId, isPrivate, workspaceId } = validatedFields.data;
-  const creatorId = req.user.userId;
+  if (!req.user) return res.status(401).json({ message: 'Not authenticated' });
+  const parsed = TaskCreateSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ errors: parsed.error.flatten().fieldErrors });
 
   try {
-    if (dueDate && new Date(dueDate) <= new Date()) {
-      return res.status(400).json({
-        message: "Target due date must be in the future.",
-      });
+    const ownerId = req.user.userId;
+    const input = parsed.data;
+    if (!validateFutureDueDate(input.dueDate)) return res.status(400).json({ message: 'Target due date must be in the future.' });
+    if (!await validateOwnedWorkspace(input.workspaceId, ownerId)) {
+      return res.status(403).json({ message: 'You can only place a task in a workspace you own.' });
     }
 
-    if (partnerId) {
-      return res.status(400).json({
-        message: "Create the task first, then invite collaborators by username.",
-      });
+    const requestedIds = input.sharedWithIds.length ? input.sharedWithIds : (input.collaboratorIds || []);
+    const shared = await validateSharedMonitors(ownerId, requestedIds);
+    if (!shared.valid) return res.status(400).json({ message: 'One or more selected users are not eligible accountability partners.' });
+
+    let visibility = input.visibility;
+    if (input.isPrivate === true || shared.ids.length === 0 && visibility === TaskVisibility.SELECTED_PARTNERS) {
+      visibility = TaskVisibility.PRIVATE;
+    }
+    if (shared.ids.length > 0 && visibility === TaskVisibility.PRIVATE && input.isPrivate !== true) {
+      visibility = TaskVisibility.SELECTED_PARTNERS;
+    }
+    if (visibility === TaskVisibility.WORKSPACE && !input.workspaceId) {
+      return res.status(400).json({ message: 'Workspace visibility requires a workspace.' });
     }
 
-    // Active Task Title Uniqueness Check (case-insensitive per-user)
-    if (status !== TaskStatus.COMPLETED) {
-      const titleTrimmed = title.trim();
-      const duplicate = await Task.findOne({
-        creatorId,
-        status: { $ne: TaskStatus.COMPLETED },
-        title: { $regex: new RegExp(`^${titleTrimmed.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') }
-      });
-      if (duplicate) {
-        return res.status(400).json({
-          message: "An active task with this title already exists. Please complete or rename it."
-        });
-      }
-    }
+    const duplicate = input.status !== TaskStatus.COMPLETED && await Task.findOne({
+      $or: [{ ownerId }, { ownerId: null, creatorId: ownerId }],
+      status: { $ne: TaskStatus.COMPLETED },
+      title: { $regex: new RegExp(`^${input.title.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') },
+    });
+    if (duplicate) return res.status(409).json({ message: 'An active task with this title already exists.' });
 
-    let partnerIdToSet = null;
-    let collaboratorIdsToSet: any[] = [];
-
-    const user = await User.findById(creatorId).select('username accountabilityPartners');
-
-    if (!isPrivate && user && user.accountabilityPartners && user.accountabilityPartners.length > 0) {
-      partnerIdToSet = user.accountabilityPartners[0];
-      collaboratorIdsToSet = user.accountabilityPartners;
-    }
-
-    const task = new Task({
-      title,
-      description,
-      status,
-      priority,
-      dueDate,
-      creatorId,
-      partnerId: partnerIdToSet,
-      collaboratorIds: collaboratorIdsToSet,
-      isPrivate: !!isPrivate,
-      workspaceId: workspaceId || null,
+    const effectiveShares = visibility === TaskVisibility.PRIVATE ? [] : shared.ids;
+    const task = await Task.create({
+      title: input.title,
+      description: input.description,
+      status: input.status,
+      priority: input.priority,
+      dueDate: input.dueDate || null,
+      ownerId,
+      creatorId: ownerId,
+      visibility,
+      isPrivate: visibility === TaskVisibility.PRIVATE,
+      sharedWithIds: effectiveShares,
+      collaboratorIds: effectiveShares,
+      partnerId: effectiveShares[0] || null,
+      workspaceId: input.workspaceId || null,
     });
 
-    await task.save();
-
-    // Send notifications to auto-added partners
-    if (!isPrivate && user && user.accountabilityPartners && user.accountabilityPartners.length > 0) {
-      await Promise.all(user.accountabilityPartners.map((pId: any) =>
-        createNotification({
-          userId: pId,
-          type: 'INVITE_ACCEPTED',
-          title: 'Accountability task link',
-          message: `@${user.username} automatically added you to their task "${title}".`,
-          taskId: task._id,
-        })
-      ));
-    }
-    
-    // Populate before returning
-    await task.populate([
-      { path: 'creatorId', select: 'username name image' },
-      { path: 'partnerId', select: 'username name image' },
-      { path: 'collaboratorIds', select: 'username name image' }
-    ]);
-
-    return res.status(201).json({
-      message: "Task created successfully",
-      task: task.toJSON(),
-    });
+    await Promise.all(effectiveShares.map((userId) => createNotification({
+      userId,
+      type: 'TASK_UPDATED',
+      title: 'Task shared with you',
+      message: `You can now monitor "${task.title}". The owner remains responsible for completing it.`,
+      taskId: task._id,
+    })));
+    await task.populate(taskPopulate);
+    return res.status(201).json({ message: 'Task created successfully', task: serializeTask(task, await getTaskPermissions(task, ownerId)) });
   } catch (error) {
-    console.error("Create task error:", error);
-    return res.status(500).json({
-      message: "An error occurred while creating the task.",
-    });
+    console.error('Create task error:', error);
+    return res.status(500).json({ message: 'An error occurred while creating the task.' });
   }
 };
 
-// Get all tasks for authenticated user
 export const getTasks = async (req: any, res: Response) => {
-  if (!req.user) {
-    return res.status(401).json({ message: "Not authenticated" });
-  }
-
-  const { workspaceId } = req.query;
-
+  if (!req.user) return res.status(401).json({ message: 'Not authenticated' });
   try {
-    const query: any = {
-      $or: [
-        { creatorId: req.user.userId },
-        { 
-          $and: [
-            { isPrivate: { $ne: true } },
-            { $or: [{ partnerId: req.user.userId }, { collaboratorIds: req.user.userId }] }
-          ]
-        }
-      ]
-    };
-
-    if (workspaceId !== undefined) {
-      if (workspaceId === 'null' || workspaceId === 'none') {
-        query.workspaceId = null;
-      } else {
-        query.workspaceId = workspaceId;
-      }
-    }
-
-    // Sort by createdAt descending so newly created tasks appear immediately at the top
-    const tasks = await Task.find(query)
-      .populate('creatorId', 'username name image')
-      .populate('partnerId', 'username name image')
-      .populate('collaboratorIds', 'username name image')
-      .sort({ createdAt: -1 });
-
-    return res.status(200).json({
-      tasks: tasks.map(task => task.toJSON()),
-    });
+    const query: any = taskCandidateQuery(req.user.userId);
+    if (req.query.workspaceId !== undefined) query.workspaceId = ['null', 'none'].includes(req.query.workspaceId) ? null : req.query.workspaceId;
+    const candidates = await Task.find(query).populate(taskPopulate).sort({ createdAt: -1 });
+    const permissions = await Promise.all(candidates.map((task) => getTaskPermissions(task, req.user.userId)));
+    const tasks = candidates.flatMap((task, index) => permissions[index].canView ? [serializeTask(task, permissions[index])] : []);
+    return res.status(200).json({ tasks });
   } catch (error) {
-    console.error("Get tasks error:", error);
-    return res.status(500).json({
-      message: "An error occurred while retrieving tasks.",
-    });
+    console.error('Get tasks error:', error);
+    return res.status(500).json({ message: 'An error occurred while retrieving tasks.' });
   }
 };
 
-// Get a single task by ID
 export const getTaskById = async (req: any, res: Response) => {
-  if (!req.user) {
-    return res.status(401).json({ message: "Not authenticated" });
-  }
-
-  const { id } = req.params;
-
+  if (!req.user) return res.status(401).json({ message: 'Not authenticated' });
   try {
-    const task = await Task.findById(id)
-      .populate('creatorId', 'username name image')
-      .populate('partnerId', 'username name image')
-      .populate('collaboratorIds', 'username name image');
-
-    if (!task) {
-      return res.status(404).json({
-        message: "Task not found.",
-      });
-    }
-
-    if (!checkOwnership(task, req)) {
-      return res.status(403).json({
-        message: "You do not have permission to view this task.",
-      });
-    }
-
-    return res.status(200).json({
-      task: task.toJSON(),
-    });
+    const task = await Task.findById(req.params.id).populate(taskPopulate);
+    if (!task) return res.status(404).json({ message: 'Task not found.' });
+    const permissions = await getTaskPermissions(task, req.user.userId);
+    if (!permissions.canView) return res.status(403).json({ message: 'You do not have permission to view this task.' });
+    return res.status(200).json({ task: serializeTask(task, permissions) });
   } catch (error) {
-    console.error("Get task by ID error:", error);
-    return res.status(500).json({
-      message: "An error occurred while retrieving the task.",
-    });
+    console.error('Get task error:', error);
+    return res.status(500).json({ message: 'An error occurred while retrieving the task.' });
   }
 };
 
-// Update a task
 export const updateTask = async (req: any, res: Response) => {
-  if (!req.user) {
-    return res.status(401).json({ message: "Not authenticated" });
-  }
-
-  const { id } = req.params;
-  const validatedFields = TaskUpdateSchema.safeParse(req.body);
-
-  if (!validatedFields.success) {
-    return res.status(400).json({
-      errors: validatedFields.error.flatten().fieldErrors,
-    });
-  }
-
+  if (!req.user) return res.status(401).json({ message: 'Not authenticated' });
+  const parsed = TaskUpdateSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ errors: parsed.error.flatten().fieldErrors });
   try {
-    const task = await Task.findById(id);
-
-    if (!task) {
-      return res.status(404).json({
-        message: "Task not found.",
-      });
+    const task: any = await Task.findById(req.params.id);
+    if (!task) return res.status(404).json({ message: 'Task not found.' });
+    const permissions = await getTaskPermissions(task, req.user.userId);
+    if (!permissions.canManage) return res.status(403).json({ message: 'Only the task owner can change task details or status.' });
+    const input = parsed.data;
+    if (!validateFutureDueDate(input.dueDate)) return res.status(400).json({ message: 'Target due date must be in the future.' });
+    if (input.workspaceId !== undefined && !await validateOwnedWorkspace(input.workspaceId, req.user.userId)) {
+      return res.status(403).json({ message: 'You can only move a task to a workspace you own.' });
     }
 
-    if (!checkOwnership(task, req)) {
-      return res.status(403).json({
-        message: "You do not have permission to update this task.",
-      });
+    let sharedIds = getExplicitMonitorIds(task);
+    if (input.sharedWithIds !== undefined) {
+      const validated = await validateSharedMonitors(req.user.userId, input.sharedWithIds);
+      if (!validated.valid) return res.status(400).json({ message: 'One or more selected users are not eligible accountability partners.' });
+      sharedIds = validated.ids;
     }
+    let visibility = input.visibility ?? task.visibility ?? (task.isPrivate ? TaskVisibility.PRIVATE : TaskVisibility.SELECTED_PARTNERS);
+    if (input.isPrivate === true) visibility = TaskVisibility.PRIVATE;
+    if (input.isPrivate === false && visibility === TaskVisibility.PRIVATE && sharedIds.length) visibility = TaskVisibility.SELECTED_PARTNERS;
+    if (visibility === TaskVisibility.WORKSPACE && !(input.workspaceId ?? getIdString(task.workspaceId))) {
+      return res.status(400).json({ message: 'Workspace visibility requires a workspace.' });
+    }
+    if (visibility === TaskVisibility.PRIVATE) sharedIds = [];
 
-    // Apply updates
-    const updates = validatedFields.data;
-
-    // Strict Creator Completion Check
-    if (updates.status !== undefined && updates.status === TaskStatus.COMPLETED) {
-      if (task.creatorId.toString() !== req.user.userId) {
-        return res.status(403).json({
-          message: "Only the task creator can mark this task as completed."
-        });
-      }
+    const immutableOwner = getTaskOwnerId(task);
+    for (const field of ['title', 'description', 'status', 'priority'] as const) {
+      if (input[field] !== undefined) task[field] = input[field];
     }
-
-    // Active Task Title Uniqueness Check (case-insensitive per-user)
-    const nextStatus = updates.status !== undefined ? updates.status : (task.status as TaskStatus);
-    const nextTitle = updates.title !== undefined ? updates.title.trim() : task.title;
-
-    if (nextStatus !== TaskStatus.COMPLETED) {
-      const duplicate = await Task.findOne({
-        _id: { $ne: id },
-        creatorId: task.creatorId,
-        status: { $ne: TaskStatus.COMPLETED },
-        title: { $regex: new RegExp(`^${nextTitle.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}$`, 'i') }
-      });
-      if (duplicate) {
-        return res.status(400).json({
-          message: "An active task with this title already exists. Please complete or rename it."
-        });
-      }
-    }
-
-    if (updates.title !== undefined) task.title = updates.title.trim();
-    if (updates.description !== undefined) task.description = updates.description;
-    if (updates.status !== undefined) task.status = updates.status;
-    if (updates.priority !== undefined) task.priority = updates.priority;
-    if (updates.dueDate !== undefined) {
-      if (updates.dueDate && new Date(updates.dueDate) <= new Date()) {
-        return res.status(400).json({
-          message: "Target due date must be in the future.",
-        });
-      }
-      task.dueDate = updates.dueDate;
-    }
-    if (updates.workspaceId !== undefined) {
-      task.workspaceId = (updates.workspaceId as any) || null;
-    }
-    if (updates.isPrivate !== undefined) {
-      task.isPrivate = !!updates.isPrivate;
-      if (task.isPrivate) {
-        task.partnerId = null;
-        task.collaboratorIds = [];
-      }
-    }
-    if (updates.partnerId !== undefined) {
-      if (updates.partnerId) {
-        return res.status(400).json({
-          message: "Collaborators must be added through accepted invites.",
-        });
-      }
-      if (!checkCreator(task, req)) {
-        return res.status(403).json({
-          message: "Only the task creator can remove a partner.",
-        });
-      }
-      task.partnerId = null;
-    }
-
+    if (input.dueDate !== undefined) task.dueDate = input.dueDate;
+    if (input.workspaceId !== undefined) task.workspaceId = input.workspaceId;
+    task.ownerId = immutableOwner;
+    task.visibility = visibility;
+    task.isPrivate = visibility === TaskVisibility.PRIVATE;
+    task.sharedWithIds = sharedIds;
+    task.collaboratorIds = sharedIds;
+    task.partnerId = sharedIds[0] || null;
     await task.save();
 
-    if (updates.status !== undefined) {
-      const otherParticipantIds = getTaskParticipantIds(task).filter((userId) => userId !== req.user.userId);
-      await Promise.all(otherParticipantIds.map((userId) => createNotification({
-        userId,
-        type: 'TASK_UPDATED',
-        title: 'Task status updated',
-        message: `"${task.title}" moved to ${task.status.toLowerCase().replace('_', ' ')}.`,
-        taskId: task._id,
+    if (input.status !== undefined) {
+      await Promise.all(sharedIds.map((userId) => createNotification({
+        userId, type: 'TASK_UPDATED', title: 'Task status updated',
+        message: `"${task.title}" moved to ${task.status.toLowerCase().replace('_', ' ')}.`, taskId: task._id,
       })));
     }
-
-    await task.populate([
-      { path: 'creatorId', select: 'username name image' },
-      { path: 'partnerId', select: 'username name image' },
-      { path: 'collaboratorIds', select: 'username name image' }
-    ]);
-
-    return res.status(200).json({
-      message: "Task updated successfully",
-      task: task.toJSON(),
-    });
+    await task.populate(taskPopulate);
+    return res.status(200).json({ message: 'Task updated successfully', task: serializeTask(task, await getTaskPermissions(task, req.user.userId)) });
   } catch (error) {
-    console.error("Update task error:", error);
-    return res.status(500).json({
-      message: "An error occurred while updating the task.",
-    });
+    console.error('Update task error:', error);
+    return res.status(500).json({ message: 'An error occurred while updating the task.' });
   }
 };
 
-// Delete a task
 export const deleteTask = async (req: any, res: Response) => {
-  if (!req.user) {
-    return res.status(401).json({ message: "Not authenticated" });
-  }
-
-  const { id } = req.params;
-
+  if (!req.user) return res.status(401).json({ message: 'Not authenticated' });
   try {
-    const task = await Task.findById(id);
-
-    if (!task) {
-      return res.status(404).json({
-        message: "Task not found.",
-      });
-    }
-
-    // Strict check: only creator can delete
-    if (!checkCreator(task, req)) {
-      return res.status(403).json({
-        message: "You do not have permission to delete this task.",
-      });
-    }
-
-    await task.deleteOne();
-
-    return res.status(200).json({
-      message: "Task deleted successfully.",
-      id,
-    });
+    const task = await Task.findById(req.params.id);
+    if (!task) return res.status(404).json({ message: 'Task not found.' });
+    if (!(await getTaskPermissions(task, req.user.userId)).canManage) return res.status(403).json({ message: 'Only the task owner can delete this task.' });
+    await Promise.all([task.deleteOne(), CheckIn.deleteMany({ taskId: task._id })]);
+    return res.status(200).json({ message: 'Task deleted successfully.', id: req.params.id });
   } catch (error) {
-    console.error("Delete task error:", error);
-    return res.status(500).json({
-      message: "An error occurred while deleting the task.",
-    });
+    console.error('Delete task error:', error);
+    return res.status(500).json({ message: 'An error occurred while deleting the task.' });
   }
 };
 
-// Get aggregated dashboard data
 export const getDashboardData = async (req: any, res: Response) => {
-  if (!req.user) {
-    return res.status(401).json({ message: "Not authenticated" });
-  }
-
-  const userId = req.user.userId;
-
+  if (!req.user) return res.status(401).json({ message: 'Not authenticated' });
   try {
-    // 1. Fetch all tasks where user is creator, or partner/collaborator on a public task
-    const allTasks = await Task.find({
-      $or: [
-        { creatorId: userId },
-        { 
-          $and: [
-            { isPrivate: { $ne: true } },
-            { $or: [{ partnerId: userId }, { collaboratorIds: userId }] }
-          ]
-        }
-      ]
-    })
-    .populate('creatorId', 'username name image')
-    .populate('partnerId', 'username name image')
-    .populate('collaboratorIds', 'username name image')
-    .sort({ createdAt: -1 });
-
-    // 2. Compute stats
-    const totalTasks = allTasks.length;
-    const completedTasks = allTasks.filter(t => t.status === TaskStatus.COMPLETED).length;
-    const inProgressTasks = allTasks.filter(t => t.status === TaskStatus.IN_PROGRESS).length;
-    const pendingTasks = allTasks.filter(t => t.status === TaskStatus.PENDING).length;
-    const activeSharedTasks = allTasks.filter(t =>
-      getTaskParticipantIds(t).length > 1 &&
-      [TaskStatus.IN_PROGRESS, TaskStatus.MISSED].includes(t.status as TaskStatus)
-    );
-    const sharedTasks = activeSharedTasks.length;
-
-    // Overdue tasks: status is not COMPLETED, has a dueDate, and dueDate is in the past relative to now
+    const candidates = await Task.find(taskCandidateQuery(req.user.userId)).populate(taskPopulate).sort({ createdAt: -1 });
+    const permissionList = await Promise.all(candidates.map((task) => getTaskPermissions(task, req.user.userId)));
+    const visible = candidates.flatMap((task, index) => permissionList[index].canView ? [{ task, permissions: permissionList[index] }] : []);
+    const owned = visible.filter(({ permissions }) => permissions.isOwner).map(({ task }) => task);
+    const monitored = visible.filter(({ permissions }) => permissions.role === 'MONITOR').map(({ task }) => task);
+    const ownedShared = owned.filter((task) => getExplicitMonitorIds(task).length > 0);
     const now = new Date();
-    const overdueTasks = allTasks.filter(t => {
-      if (t.status === TaskStatus.COMPLETED || !t.dueDate) return false;
-      return new Date(t.dueDate) < now;
-    }).sort((a, b) => {
-      const dateA = a.dueDate ? new Date(a.dueDate).getTime() : 0;
-      const dateB = b.dueDate ? new Date(b.dueDate).getTime() : 0;
-      return dateA - dateB;
-    });
-
-    const overdueCount = overdueTasks.length;
-
-    // 3. Upcoming Deadlines: Active (not COMPLETED), due date is in the future
-    const upcomingDeadlines = allTasks.filter(t => {
-      if (t.status === TaskStatus.COMPLETED || !t.dueDate) return false;
-      return new Date(t.dueDate) >= now;
-    }).sort((a, b) => {
-      const dateA = a.dueDate ? new Date(a.dueDate).getTime() : 0;
-      const dateB = b.dueDate ? new Date(b.dueDate).getTime() : 0;
-      return dateA - dateB;
-    }).slice(0, 5); // Limit to top 5 upcoming
-
-    // 4. Shared Tasks Center: tasks containing both creator and partner information
-    const sharedTasksList = activeSharedTasks;
-
-    const latestCheckIns = await CheckIn.find({ taskId: { $in: allTasks.map((t) => t._id) } })
-      .populate('userId', 'username name image')
-      .populate('taskId', 'title')
-      .sort({ createdAt: -1 })
-      .limit(10);
-
-    // 5. Recent Activity Feed: Dynamic feed generated from recent task changes
-    const sortedByUpdate = [...allTasks].sort((a, b) => {
-      const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-      const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
-      return timeB - timeA;
-    });
-
-    const taskActivities = sortedByUpdate.slice(0, 10).map(t => {
-      const isUserCreator = getIdString(t.creatorId);
-      const creatorName = isUserCreator === userId ? 'You' : `@${(t.creatorId as any)?.username || 'partner'}`;
-      
-      let text = '';
-      if (t.status === TaskStatus.COMPLETED) {
-        text = `${creatorName} completed '${t.title}'`;
-      } else if (t.status === TaskStatus.IN_PROGRESS) {
-        text = `${creatorName} started working on '${t.title}'`;
-      } else {
-        const diffMs = new Date(t.updatedAt).getTime() - new Date(t.createdAt).getTime();
-        if (diffMs < 5000) {
-          text = `${creatorName} created task '${t.title}'`;
-        } else {
-          text = `${creatorName} updated task '${t.title}'`;
-        }
-      }
-
-      const timeDiffMin = Math.round((now.getTime() - new Date(t.updatedAt).getTime()) / 60000);
-      let timeStr = 'Just now';
-      if (timeDiffMin > 0) {
-        if (timeDiffMin < 60) {
-          timeStr = `${timeDiffMin}m ago`;
-        } else {
-          const hours = Math.round(timeDiffMin / 60);
-          if (hours < 24) {
-            timeStr = `${hours}h ago`;
-          } else {
-            timeStr = new Date(t.updatedAt).toLocaleDateString();
-          }
-        }
-      }
-
-      return {
-        id: t._id.toString() + '-' + t.updatedAt,
-        text,
-        time: timeStr,
-        createdAt: t.updatedAt
-      };
-    });
-
-    const checkInActivities = latestCheckIns.map((checkIn: any) => {
-      const actorId = getIdString(checkIn.userId);
-      const actorName = actorId === userId ? 'You' : `@${checkIn.userId?.username || 'partner'}`;
-      const createdAt = new Date(checkIn.createdAt);
-      const timeDiffMin = Math.round((now.getTime() - createdAt.getTime()) / 60000);
-      let timeStr = 'Just now';
-      if (timeDiffMin > 0) {
-        if (timeDiffMin < 60) timeStr = `${timeDiffMin}m ago`;
-        else if (timeDiffMin < 1440) timeStr = `${Math.round(timeDiffMin / 60)}h ago`;
-        else timeStr = createdAt.toLocaleDateString();
-      }
-
-      return {
-        id: checkIn._id.toString(),
-        text: `${actorName} posted a ${checkIn.status.toLowerCase().replace('_', ' ')} check-in on '${checkIn.taskId?.title || 'a task'}'`,
-        time: timeStr,
-        createdAt,
-      };
-    });
-
-    const activities = [...taskActivities, ...checkInActivities]
-      .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, 10)
-      .map(({ createdAt, ...activity }) => activity);
-
-    // 6. Check-in Reminders
-    const checkInReminders = sharedTasksList.slice(0, 3).map(t => {
-      const isCreatorSelf = (t.creatorId as any)?._id?.toString() === userId;
-      const collaborator = (t.collaboratorIds as any[])?.find((participant: any) => getIdString(participant) !== userId);
-      const partnerUser = collaborator || (isCreatorSelf ? t.partnerId : t.creatorId);
-      const partnerName = (partnerUser as any)?.name || `@${(partnerUser as any)?.username || 'partner'}`;
-      return {
-        taskId: t._id.toString(),
-        taskTitle: t.title,
-        partnerName,
-        message: `Send check-in update to ${partnerName} for '${t.title}'`
-      };
-    });
-
+    const overdue = owned.filter((task) => task.status !== TaskStatus.COMPLETED && task.dueDate && new Date(task.dueDate) < now);
+    const upcoming = owned.filter((task) => task.status !== TaskStatus.COMPLETED && task.dueDate && new Date(task.dueDate) >= now)
+      .sort((a, b) => new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime()).slice(0, 5);
+    const serialized = visible.map(({ task, permissions }) => serializeTask(task, permissions));
     return res.status(200).json({
       stats: {
-        totalTasks,
-        completedTasks,
-        inProgressTasks,
-        pendingTasks,
-        overdueTasks: overdueCount,
-        sharedTasks
+        totalTasks: owned.length,
+        completedTasks: owned.filter((task) => task.status === TaskStatus.COMPLETED).length,
+        inProgressTasks: owned.filter((task) => task.status === TaskStatus.IN_PROGRESS).length,
+        pendingTasks: owned.filter((task) => task.status === TaskStatus.PENDING).length,
+        overdueTasks: overdue.length,
+        sharedTasks: ownedShared.length,
       },
-      allTasks: allTasks.map(t => t.toJSON()),
-      overdueTasks: overdueTasks.map(t => t.toJSON()),
-      upcomingDeadlines: upcomingDeadlines.map(t => t.toJSON()),
-      sharedTasks: sharedTasksList.map(t => t.toJSON()),
-      activities,
-      checkInReminders
+      allTasks: serialized,
+      myTasks: serialized.filter((task: any) => task.permissions.isOwner),
+      monitoringTasks: serialized.filter((task: any) => task.permissions.role === 'MONITOR'),
+      overdueTasks: overdue.map((task) => serializeTask(task, { isOwner: true, canView: true, canComment: true, canManage: true, role: 'OWNER' })),
+      upcomingDeadlines: upcoming.map((task) => serializeTask(task, { isOwner: true, canView: true, canComment: true, canManage: true, role: 'OWNER' })),
+      sharedTasks: [...ownedShared, ...monitored].map((task) => serialized.find((item: any) => item.id === task.id)),
+      activities: [],
+      checkInReminders: monitored.slice(0, 3).map((task) => ({ taskId: task.id, taskTitle: task.title, partnerName: (task.creatorId as any)?.name || `@${(task.creatorId as any)?.username || 'owner'}`, message: `Review ${task.title}` })),
     });
-
   } catch (error) {
-    console.error("Get dashboard data error:", error);
-    return res.status(500).json({
-      message: "An error occurred while retrieving dashboard data.",
-    });
+    console.error('Dashboard error:', error);
+    return res.status(500).json({ message: 'An error occurred while retrieving dashboard data.' });
   }
 };
 
-// Remove collaborator from task
 export const removeCollaboratorFromTask = async (req: any, res: Response) => {
   if (!req.user) return res.status(401).json({ message: 'Not authenticated' });
-  const { id, partnerId } = req.params;
   try {
-    const task = await Task.findById(id);
+    const task: any = await Task.findById(req.params.id);
     if (!task) return res.status(404).json({ message: 'Task not found.' });
-
-    // Permitted if current user is either creator or the partner themselves
-    const isCreator = task.creatorId.toString() === req.user.userId;
-    const isSelfPartner = partnerId === req.user.userId;
-    if (!isCreator && !isSelfPartner) {
-      return res.status(403).json({ message: 'You do not have permission to remove this collaborator.' });
-    }
-
-    // Pull from collaboratorIds
-    task.collaboratorIds = (task.collaboratorIds || []).filter(cid => cid.toString() !== partnerId);
-    if (task.partnerId && task.partnerId.toString() === partnerId) {
-      task.partnerId = null;
+    const permissions = await getTaskPermissions(task, req.user.userId);
+    const isSelf = req.params.partnerId === req.user.userId && permissions.role === 'MONITOR';
+    if (!permissions.canManage && !isSelf) return res.status(403).json({ message: 'You cannot revoke this task access.' });
+    const remaining = getExplicitMonitorIds(task).filter((id) => id !== req.params.partnerId);
+    task.sharedWithIds = remaining;
+    task.collaboratorIds = remaining;
+    task.partnerId = remaining[0] || null;
+    if (!remaining.length && task.visibility === TaskVisibility.SELECTED_PARTNERS) {
+      task.visibility = TaskVisibility.PRIVATE;
+      task.isPrivate = true;
     }
     await task.save();
-
-    return res.status(200).json({ message: 'Collaborator removed from task successfully.' });
+    return res.status(200).json({ message: isSelf ? 'You stopped monitoring this task.' : 'Partner access revoked.' });
   } catch (error) {
-    console.error('Remove collaborator from task error:', error);
-    return res.status(500).json({ message: 'An error occurred while removing the collaborator from the task.' });
+    console.error('Remove collaborator error:', error);
+    return res.status(500).json({ message: 'An error occurred while revoking task access.' });
   }
 };

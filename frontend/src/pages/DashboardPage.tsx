@@ -91,6 +91,10 @@ export default function DashboardPage() {
   const [newTaskDesc, setNewTaskDesc] = React.useState("");
   const [newTaskPriority, setNewTaskPriority] = React.useState<"high" | "medium" | "low">("medium");
   const [newTaskDueDate, setNewTaskDueDate] = React.useState("");
+  const [newTaskPartnerIds, setNewTaskPartnerIds] = React.useState<string[]>([]);
+  const [taskFormError, setTaskFormError] = React.useState<string | null>(null);
+  const [taskFormFeedback, setTaskFormFeedback] = React.useState<string | null>(null);
+  const [submittingTask, setSubmittingTask] = React.useState(false);
   const [checkInTaskId, setCheckInTaskId] = React.useState("");
   const [checkInStatus, setCheckInStatus] = React.useState<CheckInStatus>("IN_PROGRESS");
   const [checkInNotes, setCheckInNotes] = React.useState("");
@@ -99,7 +103,7 @@ export default function DashboardPage() {
   const [workspaces, setWorkspaces] = React.useState<Workspace[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = React.useState<string>("all");
   const [newTaskWorkspaceId, setNewTaskWorkspaceId] = React.useState<string>("");
-  const [newTaskIsPrivate, setNewTaskIsPrivate] = React.useState<boolean>(false);
+  const [newTaskIsPrivate, setNewTaskIsPrivate] = React.useState<boolean>(true);
   const [workspaceNameInput, setWorkspaceNameInput] = React.useState("");
   const [editingWorkspaceId, setEditingWorkspaceId] = React.useState<string | null>(null);
   const [editingWorkspaceName, setEditingWorkspaceName] = React.useState("");
@@ -210,21 +214,29 @@ export default function DashboardPage() {
     return Array.from(partnerMap.values());
   }, [partnerRelations, user?.id]);
 
+  const eligibleTaskPartners = React.useMemo(() => partnerRelations.flatMap((relation) => {
+    if (relation.status !== "ACCEPTED") return [];
+    const senderId = relation.senderId?.id || relation.senderId;
+    const canMonitorMe = relation.mode === "MUTUAL" || (relation.mode === "SINGLE" && senderId === user?.id);
+    if (!canMonitorMe) return [];
+    const partner = senderId === user?.id ? relation.receiverId : relation.senderId;
+    return partner?.id ? [{ ...partner, relationMode: relation.mode }] : [];
+  }), [partnerRelations, user?.id]);
+
   // Computed filtered tasks lists based on workspaceId filter
   const filteredTasks = React.useMemo(() => {
+    const ownedTasks = tasks.filter((task) => task.permissions?.isOwner ?? ((task.ownerId as any)?.id || task.ownerId || (task.creatorId as any)?.id || task.creatorId) === user?.id);
     if (selectedWorkspaceId === "all") {
-      return tasks;
+      return ownedTasks;
     }
     if (selectedWorkspaceId === "none") {
-      return tasks.filter(t => !t.workspaceId);
+      return ownedTasks.filter(t => !t.workspaceId);
     }
-    return tasks.filter(t => t.workspaceId === selectedWorkspaceId);
-  }, [tasks, selectedWorkspaceId]);
+    return ownedTasks.filter(t => t.workspaceId === selectedWorkspaceId);
+  }, [tasks, selectedWorkspaceId, user?.id]);
 
   const filteredSharedTasks = React.useMemo(() => {
-    const activeSharedTasks = (dashboardData?.sharedTasks || []).filter((task) =>
-      task.status === "IN_PROGRESS" || task.status === "MISSED"
-    );
+    const activeSharedTasks = (dashboardData?.monitoringTasks || tasks.filter((task) => task.permissions?.role === "MONITOR"));
     if (selectedWorkspaceId === "all") {
       return activeSharedTasks;
     }
@@ -232,7 +244,7 @@ export default function DashboardPage() {
       return activeSharedTasks.filter(t => !t.workspaceId);
     }
     return activeSharedTasks.filter(t => t.workspaceId === selectedWorkspaceId);
-  }, [dashboardData?.sharedTasks, selectedWorkspaceId]);
+  }, [dashboardData?.monitoringTasks, tasks, selectedWorkspaceId]);
 
   const filteredOverdueTasks = React.useMemo(() => {
     if (!dashboardData?.overdueTasks) return [];
@@ -244,6 +256,38 @@ export default function DashboardPage() {
     }
     return dashboardData.overdueTasks.filter(t => t.workspaceId === selectedWorkspaceId);
   }, [dashboardData?.overdueTasks, selectedWorkspaceId]);
+
+  const workspacePerformance = React.useMemo(() => {
+    const workspaceMap = new Map<string, Workspace>();
+    workspaces.forEach((workspace) => {
+      if (workspace?.id) {
+        workspaceMap.set(workspace.id, workspace);
+      }
+    });
+
+    const now = new Date();
+    return Array.from(workspaceMap.values()).map((workspace) => {
+      const workspaceTasks = tasks.filter((task) => task.workspaceId === workspace.id);
+      const totalTasks = workspaceTasks.length;
+      const completedTasks = workspaceTasks.filter((task) => task.status === "COMPLETED").length;
+      const overdueTasks = workspaceTasks.filter((task) =>
+        task.status !== "COMPLETED" &&
+        task.dueDate &&
+        new Date(task.dueDate) < now
+      ).length;
+
+      return {
+        workspaceId: workspace.id,
+        name: workspace.name,
+        owner: workspace.userId,
+        isDefault: workspace.isDefault,
+        totalTasks,
+        completedTasks,
+        completionRate: totalTasks ? Math.round((completedTasks / totalTasks) * 100) : 0,
+        overdueTasks,
+      };
+    });
+  }, [tasks, workspaces]);
 
   // Actions
   const getMinDateTimeString = () => {
@@ -258,23 +302,29 @@ export default function DashboardPage() {
 
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTaskTitle.trim()) return;
+    if (!newTaskTitle.trim() || submittingTask) return;
+
+    setTaskFormError(null);
+    setTaskFormFeedback(null);
 
     if (newTaskDueDate) {
       const selected = new Date(newTaskDueDate);
       if (selected <= new Date()) {
-        alert("Target due date must be in the future!");
+        setTaskFormError("Target due date must be in the future.");
         return;
       }
     }
 
     try {
+      setSubmittingTask(true);
       await taskService.createTask({
         title: newTaskTitle,
         description: newTaskDesc,
         priority: newTaskPriority.toUpperCase() as any,
         dueDate: newTaskDueDate || null,
-        isPrivate: newTaskIsPrivate,
+        isPrivate: newTaskIsPrivate || newTaskPartnerIds.length === 0,
+        visibility: newTaskIsPrivate || newTaskPartnerIds.length === 0 ? "PRIVATE" : "SELECTED_PARTNERS",
+        sharedWithIds: newTaskIsPrivate ? [] : newTaskPartnerIds,
         workspaceId: newTaskWorkspaceId || null,
       });
 
@@ -285,11 +335,15 @@ export default function DashboardPage() {
       setNewTaskDesc("");
       setNewTaskPriority("medium");
       setNewTaskDueDate("");
-      setNewTaskIsPrivate(false);
+      setNewTaskIsPrivate(true);
+      setNewTaskPartnerIds([]);
       setNewTaskWorkspaceId("");
+      setTaskFormFeedback("Task created successfully.");
       setIsTaskModalOpen(false);
-    } catch (error) {
-      console.error("Failed to create task:", error);
+    } catch (error: any) {
+      setTaskFormError(error.response?.data?.message || Object.values(error.response?.data?.errors || {}).flat()[0] || "Task could not be created. Your entries have been kept.");
+    } finally {
+      setSubmittingTask(false);
     }
   };
 
@@ -323,6 +377,15 @@ export default function DashboardPage() {
       await loadDashboardData();
     } catch (error) {
       console.error("Failed to update invite:", error);
+    }
+  };
+
+  const handleCancelInvite = async (id: string) => {
+    try {
+      await inviteService.cancelInvite(id);
+      setInvites(await inviteService.listInvites());
+    } catch (error: any) {
+      setInviteError(error.response?.data?.message || "Invite could not be cancelled.");
     }
   };
 
@@ -435,7 +498,7 @@ export default function DashboardPage() {
   };
 
   const handleRemoveAccountabilityPartner = async (relationId: string) => {
-    if (!confirm("Remove this user as an accountability partner? This will revoke task monitoring and workspace sharing.")) return;
+    if (!confirm("End this accountability relationship? Relationship-derived task access will be revoked. Historical activity remains, and unrelated workspace access is unchanged.")) return;
     try {
       await partnersService.removePartner(relationId);
       const data = await partnersService.getPartners();
@@ -624,21 +687,18 @@ export default function DashboardPage() {
       (r) => r.status === "ACCEPTED" && r.mode === "MUTUAL"
     );
     const acceptedSingle = partnerRelations.filter(
-      (r) => r.status === "ACCEPTED" && r.mode === "SINGLE" && (r.senderId.id === user?.id || r.senderId === user?.id)
+      (r) => r.status === "ACCEPTED" && r.mode === "SINGLE"
     );
     const incomingPending = partnerRelations.filter(
       (r) => r.status === "PENDING" && (r.receiverId.id === user?.id || r.receiverId === user?.id)
     );
 
 
-    const isMutualLimitReached = acceptedMutual.length >= 3;
-    const isSingleLimitReached = acceptedSingle.length >= 4;
-
     const explainMode = (mode: "MUTUAL" | "SINGLE") => {
       if (mode === "MUTUAL") {
-        return "Mutual partner means you both monitor each other's tasks and are added to each other's workspaces.";
+        return "Mutual partnership: you can help each other stay accountable. You'll each see only tasks explicitly shared with you.";
       }
-      return "Single partner means they monitor your tasks (read-only for them, they do not share their tasks or workspaces with you).";
+      return "Single partnership is directional: the invited person monitors the sender's explicitly shared tasks. Private tasks and workspaces remain private.";
     };
 
     return (
@@ -674,7 +734,7 @@ export default function DashboardPage() {
                         invitePartnerMode === "MUTUAL" ? "bg-zinc-900 text-indigo-400" : "text-zinc-550 hover:text-zinc-350"
                       )}
                     >
-                      Mutual ({acceptedMutual.length}/3)
+                      Mutual ({acceptedMutual.length})
                     </button>
                     <button
                       type="button"
@@ -684,7 +744,7 @@ export default function DashboardPage() {
                         invitePartnerMode === "SINGLE" ? "bg-zinc-900 text-indigo-400" : "text-zinc-550 hover:text-zinc-350"
                       )}
                     >
-                      Single ({acceptedSingle.length}/4)
+                      Single ({acceptedSingle.length})
                     </button>
                   </div>
                 </div>
@@ -698,19 +758,10 @@ export default function DashboardPage() {
                   <p className="leading-normal">{explainMode(invitePartnerMode)}</p>
                 </div>
 
-                {/* Warning Banner if limit exceeded */}
-                {((invitePartnerMode === "MUTUAL" && isMutualLimitReached) ||
-                  (invitePartnerMode === "SINGLE" && isSingleLimitReached)) && (
-                  <div className="p-3 rounded-lg border border-red-950 bg-red-950/20 text-red-400 text-[10px] leading-normal font-semibold">
-                    You've exceeded the partner limit. Remove a dormant partner to add another.
-                  </div>
-                )}
-
                 <div className="relative">
                   <Input
                     id="partnerSearchInput"
                     placeholder="Search by username..."
-                    disabled={(invitePartnerMode === "MUTUAL" && isMutualLimitReached) || (invitePartnerMode === "SINGLE" && isSingleLimitReached)}
                     value={partnerSearchQuery}
                     onChange={(e) => handlePartnerSearch(e.target.value)}
                     className="pl-8"
@@ -752,11 +803,7 @@ export default function DashboardPage() {
                           rel.status === "PENDING"
                       );
 
-                      const isDisabled = 
-                        isAlreadyLinked || 
-                        hasPending ||
-                        (invitePartnerMode === "MUTUAL" && isMutualLimitReached) ||
-                        (invitePartnerMode === "SINGLE" && isSingleLimitReached);
+                      const isDisabled = isAlreadyLinked || hasPending;
 
                       return (
                         <div key={profile.id} className="flex items-center justify-between gap-3 border-b border-zinc-900/60 pb-2.5 last:border-0 last:pb-0">
@@ -799,7 +846,6 @@ export default function DashboardPage() {
                   {incomingPending.map((invite) => {
                     const sender = invite.senderId;
                     const isMutualInvite = invite.mode === "MUTUAL";
-                    const isAcceptDisabled = isMutualInvite ? isMutualLimitReached : isSingleLimitReached;
 
                     return (
                       <Card key={invite.id} className="p-4 border-indigo-950 bg-indigo-950/10 flex flex-col gap-3 relative text-left">
@@ -821,7 +867,6 @@ export default function DashboardPage() {
                             <Button 
                               size="sm" 
                               onClick={() => handleAcceptPartnerInvite(invite.id)} 
-                              disabled={isAcceptDisabled}
                               className="h-7 text-[10px] px-2.5 font-bold"
                             >
                               Accept
@@ -841,11 +886,6 @@ export default function DashboardPage() {
                         <div className="text-[9px] text-zinc-500 bg-zinc-950/40 p-2.5 rounded border border-zinc-900/60 leading-normal">
                           <span className="font-semibold text-zinc-400 block mb-0.5">Invitation details:</span>
                           {explainMode(invite.mode)}
-                          {isAcceptDisabled && (
-                            <span className="text-red-400 font-bold block mt-1.5">
-                              ⚠️ You cannot accept this invitation because you have reached your partner limit. Remove a dormant partner to accept.
-                            </span>
-                          )}
                         </div>
                       </Card>
                     );
@@ -1117,7 +1157,7 @@ export default function DashboardPage() {
                 {(metrics as any).mutualPartnersCount || 0} / {(metrics as any).singlePartnersCount || 0}
               </span>
             </div>
-            <p className="text-[10px] text-zinc-500 mt-2">Maximum allowed is 3 mutual, 4 single</p>
+            <p className="text-[10px] text-zinc-500 mt-2">Accepted relationships; no fixed product limit</p>
           </Card>
 
           <Card className="p-5 bg-zinc-950/40 border-zinc-900">
@@ -1139,10 +1179,10 @@ export default function DashboardPage() {
             </div>
             
             <div className="space-y-4 overflow-y-auto max-h-60 pt-2 flex-1">
-              {((analytics as any).workspaces || []).length === 0 ? (
+              {workspacePerformance.length === 0 ? (
                 <p className="text-[11px] text-zinc-600 italic text-center py-8">No workspaces loaded.</p>
               ) : (
-                ((analytics as any).workspaces as any[]).map((ws) => (
+                workspacePerformance.map((ws) => (
                   <div key={ws.workspaceId} className="space-y-1.5">
                     <div className="flex justify-between text-xs font-semibold text-zinc-350">
                       <span className="truncate flex items-center gap-1.5">
@@ -2008,7 +2048,7 @@ export default function DashboardPage() {
                   {filteredSharedTasks && filteredSharedTasks.length > 0 && (
                     <div className="space-y-3">
                       <h2 className="text-xs font-bold text-zinc-300 tracking-wide uppercase flex items-center gap-1.5">
-                        <Award className="h-4 w-4 text-emerald-400" /> Shared Targets Board
+                        <Award className="h-4 w-4 text-emerald-400" /> Monitoring
                       </h2>
                       <div className="space-y-3">
                         {filteredSharedTasks.map((task) => {
@@ -2020,10 +2060,7 @@ export default function DashboardPage() {
                           return (
                             <Card key={task.id} className="p-4 flex flex-col sm:flex-row justify-between sm:items-center gap-4 hover:border-zinc-800 transition-all duration-300 border-indigo-950/40 bg-zinc-950/20">
                               <div className="flex items-start gap-3">
-                                <button
-                                  onClick={() => handleToggleTaskStatus(task.id)}
-                                  className="mt-1 text-zinc-650 hover:text-indigo-400 focus:outline-none shrink-0"
-                                >
+                                <span className="mt-1 text-zinc-650 shrink-0" title="Only the owner can change status">
                                   {task.status === "COMPLETED" ? (
                                     <CheckCircle2 className="h-5 w-5 text-indigo-500" />
                                   ) : task.status === "MISSED" ? (
@@ -2033,7 +2070,7 @@ export default function DashboardPage() {
                                   ) : (
                                     <Circle className="h-5 w-5 text-zinc-750" />
                                   )}
-                                </button>
+                                </span>
                                 <div className="text-left">
                                   <div className="flex items-center gap-2 flex-wrap">
                                     <span 
@@ -2058,17 +2095,12 @@ export default function DashboardPage() {
                                       </div>
                                     </div>
                                     <span className="text-[10px] text-zinc-500">
-                                      Partner: <span className="font-semibold text-indigo-400">{partnerLabel}</span>
+                                      Owner: <span className="font-semibold text-indigo-400">{partnerLabel}</span> · Created by: <span className="font-semibold text-indigo-400">{partnerLabel}</span> · You're monitoring
                                     </span>
                                   </div>
                                 </div>
                               </div>
-                              <button
-                                onClick={() => handleDeleteTask(task.id, task.title)}
-                                className="self-end sm:self-auto rounded-lg p-2 text-zinc-700 hover:text-red-400 hover:bg-red-950/20 transition-all focus:outline-none shrink-0"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
+                              <Button onClick={() => navigate(`/tasks/${task.id}`)} variant="outline" size="sm">View &amp; support</Button>
                             </Card>
                           );
                         })}
@@ -2079,7 +2111,7 @@ export default function DashboardPage() {
                   {/* General Space checklist */}
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <h2 className="text-xs font-bold text-zinc-300 tracking-wide uppercase">All Active Space board</h2>
+                      <h2 className="text-xs font-bold text-zinc-300 tracking-wide uppercase">My Tasks</h2>
                       <Badge variant="secondary" className="px-2 py-0.5 text-[9px] font-semibold">
                         {filteredTasks.filter(t => t.status !== "COMPLETED").length} Remaining
                       </Badge>
@@ -2089,9 +2121,9 @@ export default function DashboardPage() {
                       <div className="flex flex-col items-center justify-center p-12 text-center rounded-xl border border-zinc-900 bg-zinc-950/20">
                         <Clock className="h-10 w-10 text-zinc-700 mb-3" />
                         <p className="text-xs font-semibold text-zinc-400">No tasks currently tracked.</p>
-                        <p className="text-[10px] text-zinc-600 mt-1">Create a milestone and assign an accountability buddy to begin.</p>
+                        <p className="text-[10px] text-zinc-600 mt-1">Create a private task, then explicitly choose who may monitor it.</p>
                         <Button onClick={() => setIsTaskModalOpen(true)} variant="secondary" size="sm" className="mt-4 font-semibold text-xs h-8">
-                          Create Milestone
+                          Create Task
                         </Button>
                       </div>
                     ) : (
@@ -2128,6 +2160,10 @@ export default function DashboardPage() {
                                   <Badge variant={task.priority === "HIGH" ? "destructive" : task.priority === "MEDIUM" ? "warning" : "secondary"} className="text-[9px] uppercase tracking-wider px-1.5 py-0">
                                     {task.priority.toLowerCase()}
                                   </Badge>
+                                  <Badge variant="secondary" className="text-[9px] uppercase tracking-wider px-1.5 py-0">Your task</Badge>
+                                  <Badge variant={task.isPrivate ? "warning" : "secondary"} className="text-[9px] uppercase tracking-wider px-1.5 py-0">
+                                    {task.isPrivate ? "Private" : `Shared with ${(task.sharedWithIds || task.collaboratorIds || []).length}`}
+                                  </Badge>
                                   <select
                                     value={task.status}
                                     onChange={(event) => handleSetTaskStatus(task.id, event.target.value as Task["status"])}
@@ -2142,6 +2178,9 @@ export default function DashboardPage() {
                                 </div>
                                 
                                 <p className="text-xs text-zinc-400/90 mt-1 max-w-lg leading-relaxed">{task.description}</p>
+                                <p className="mt-1.5 text-[10px] text-zinc-500">
+                                  Owner: <span className="font-semibold text-zinc-300">You</span> · Created by: <span className="font-semibold text-zinc-300">You</span> · Monitoring: <span className="font-semibold text-zinc-300">{(task.sharedWithIds || task.collaboratorIds || []).length ? (task.sharedWithIds || task.collaboratorIds || []).map((partner) => `@${typeof partner === "string" ? "partner" : partner.username}`).join(", ") : "None"}</span>
+                                </p>
                                 
                                 <div className="flex items-center gap-4 mt-2.5 text-[10px] text-zinc-500 flex-wrap">
                                   <span className="flex items-center gap-1">
@@ -2183,8 +2222,9 @@ export default function DashboardPage() {
                       .map((invite) => (
                         <div key={invite.id} className="space-y-2 border-b border-indigo-950/40 pb-3 last:border-0 last:pb-0">
                           <p className="text-xs text-zinc-300">
-                            <span className="font-semibold">@{invite.senderId.username}</span> invited you to <span className="font-semibold">{invite.taskId.title}</span>.
+                            <span className="font-semibold">@{invite.senderId.username}</span> invited you to monitor their task <span className="font-semibold">{invite.taskId.title}</span> as an accountability partner.
                           </p>
+                          <p className="text-[10px] leading-relaxed text-zinc-500">You may view progress and leave feedback. Only the task owner can edit details, change status, complete, or delete it. Access expires {new Date(invite.expiresAt).toLocaleDateString()}.</p>
                           <div className="flex gap-2">
                             <Button size="sm" className="h-7 text-[10px]" onClick={() => handleInviteResponse(invite.id, "accept")}>
                               Accept
@@ -2195,6 +2235,20 @@ export default function DashboardPage() {
                           </div>
                         </div>
                       ))}
+                  </Card>
+                </div>
+              ) : null}
+
+              {invites.some((invite) => invite.status === "PENDING" && invite.senderId.id === user?.id) ? (
+                <div className="space-y-3 text-left">
+                  <h2 className="text-xs font-bold text-zinc-300 tracking-wide uppercase">Sent task invitations</h2>
+                  <Card className="p-4 space-y-3 border-zinc-900 bg-zinc-950/30">
+                    {invites.filter((invite) => invite.status === "PENDING" && invite.senderId.id === user?.id).map((invite) => (
+                      <div key={invite.id} className="flex items-center justify-between gap-3 border-b border-zinc-900 pb-3 last:border-0 last:pb-0">
+                        <p className="text-[11px] text-zinc-400">Waiting for <span className="font-semibold text-zinc-200">@{invite.receiverId.username}</span> to accept monitoring <span className="font-semibold text-zinc-200">{invite.taskId.title}</span>.</p>
+                        <Button size="sm" variant="outline" className="h-7 text-[10px]" onClick={() => handleCancelInvite(invite.id)}>Cancel</Button>
+                      </div>
+                    ))}
                   </Card>
                 </div>
               ) : null}
@@ -2218,7 +2272,7 @@ export default function DashboardPage() {
                       const isCreator = selectedTask 
                         ? ((selectedTask.creatorId as any)?.id === user?.id || selectedTask.creatorId === user?.id)
                         : true;
-                      return (
+                      return isCreator ? (
                         <select
                           value={checkInStatus}
                           onChange={(e) => setCheckInStatus(e.target.value as CheckInStatus)}
@@ -2228,7 +2282,7 @@ export default function DashboardPage() {
                           <option value="IN_PROGRESS">In Progress</option>
                           <option value="MISSED">Missed</option>
                         </select>
-                      );
+                      ) : <p className="rounded-lg border border-zinc-900 bg-zinc-950 px-3 py-2 text-[10px] text-zinc-500">Partner feedback only — this will not change the owner's task status.</p>;
                     })()}
                     <textarea
                       value={checkInNotes}
@@ -2334,6 +2388,10 @@ export default function DashboardPage() {
             title="Create Accountability Task"
           >
             <form onSubmit={handleCreateTask} className="space-y-4">
+              <div className="rounded-lg border border-indigo-900/40 bg-indigo-950/20 p-3 text-left">
+                <p className="text-sm font-semibold text-indigo-200">You're creating a task for yourself.</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-zinc-400">Your accountability partners can help monitor your progress, but you're responsible for completing this task.</p>
+              </div>
               <Input
                 id="taskTitle"
                 label="Task Title"
@@ -2372,6 +2430,29 @@ export default function DashboardPage() {
                 />
               </div>
 
+              <div className="space-y-2 text-left">
+                <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400 block">Accountability partners</label>
+                {eligibleTaskPartners.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-zinc-800 p-3 text-[11px] text-zinc-500">No accountability partners yet. You can create this task privately and invite someone later.</p>
+                ) : (
+                  <div className="max-h-36 space-y-2 overflow-y-auto rounded-lg border border-zinc-900 p-2">
+                    {eligibleTaskPartners.map((partner) => {
+                      const checked = newTaskPartnerIds.includes(partner.id);
+                      return (
+                        <label key={partner.id} className="flex cursor-pointer items-center gap-3 rounded-md p-2 hover:bg-zinc-900/60">
+                          <input type="checkbox" checked={checked} onChange={() => {
+                            const next = checked ? newTaskPartnerIds.filter((id) => id !== partner.id) : [...newTaskPartnerIds, partner.id];
+                            setNewTaskPartnerIds(next);
+                            setNewTaskIsPrivate(next.length === 0);
+                          }} className="accent-indigo-500" />
+                          <span className="text-xs text-zinc-200">{partner.name || partner.username} <span className="text-zinc-500">@{partner.username} · {partner.relationMode === "MUTUAL" ? "Mutual" : "Single"}</span></span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
                 <div className="space-y-1.5 text-left">
                   <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400 block">Workspace</label>
@@ -2391,7 +2472,11 @@ export default function DashboardPage() {
 
                 <div 
                   className="flex items-center gap-3 bg-zinc-950/30 border border-zinc-900 px-4 py-2 rounded-lg text-left self-end h-[38px] cursor-pointer" 
-                  onClick={() => setNewTaskIsPrivate(!newTaskIsPrivate)}
+                  onClick={() => {
+                    const next = !newTaskIsPrivate;
+                    setNewTaskIsPrivate(next);
+                    if (next) setNewTaskPartnerIds([]);
+                  }}
                 >
                   <button
                     type="button"
@@ -2405,23 +2490,36 @@ export default function DashboardPage() {
                   </button>
                   <div className="flex flex-col">
                     <span className="text-xs font-bold text-zinc-300">Private Task</span>
-                    <span className="text-[8px] text-zinc-500 leading-tight">Accountability partners won't be linked</span>
+                    <span className="text-[8px] text-zinc-500 leading-tight">Default: only you can access this task</span>
                   </div>
                   <input
                     type="checkbox"
                     checked={newTaskIsPrivate}
-                    onChange={(e) => setNewTaskIsPrivate(e.target.checked)}
+                    onChange={(e) => {
+                      setNewTaskIsPrivate(e.target.checked);
+                      if (e.target.checked) setNewTaskPartnerIds([]);
+                    }}
                     className="ml-auto accent-indigo-500 rounded border-zinc-800"
                   />
                 </div>
               </div>
 
+              <div className="rounded-lg border border-zinc-900 bg-zinc-950/50 p-3 text-[11px] text-zinc-400 space-y-1">
+                <p><span className="font-semibold text-zinc-200">Task owner:</span> You</p>
+                <p><span className="font-semibold text-zinc-200">Created by:</span> You</p>
+                <p><span className="font-semibold text-zinc-200">Visibility:</span> {newTaskPartnerIds.length && !newTaskIsPrivate ? "Shared with selected partners" : "Private"}</p>
+                <p><span className="font-semibold text-zinc-200">Accountability partners:</span> {newTaskPartnerIds.length && !newTaskIsPrivate ? eligibleTaskPartners.filter((partner) => newTaskPartnerIds.includes(partner.id)).map((partner) => partner.name || `@${partner.username}`).join(", ") : "None"}</p>
+              </div>
+
+              {taskFormError ? <p className="text-xs text-red-400" role="alert">{taskFormError}</p> : null}
+              {taskFormFeedback ? <p className="text-xs text-emerald-400">{taskFormFeedback}</p> : null}
+
               <div className="flex justify-end gap-2 pt-2">
                 <Button type="button" variant="outline" onClick={() => setIsTaskModalOpen(false)} size="sm">
                   Cancel
                 </Button>
-                <Button type="submit" size="sm">
-                  Create Task
+                <Button type="submit" size="sm" disabled={submittingTask}>
+                  {submittingTask ? "Creating…" : "Create Task"}
                 </Button>
               </div>
             </form>

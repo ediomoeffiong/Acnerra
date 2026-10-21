@@ -9,6 +9,7 @@ export interface CheckIn {
   notes: string;
   taskId: string;
   userId: UserSummary;
+  kind?: 'OWNER_PROGRESS' | 'PARTNER_FEEDBACK' | null;
   createdAt: string;
   updatedAt: string;
 }

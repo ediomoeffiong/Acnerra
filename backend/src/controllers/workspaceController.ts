@@ -1,19 +1,8 @@
 import { Response } from 'express';
 import { Workspace } from '../models/Workspace';
 import { Task } from '../models/Task';
-import { PartnerRelation, PartnerMode, PartnerStatus } from '../models/PartnerRelation';
-
-const getMutualPartnerIds = async (userId: string) => {
-  const mutualRelations = await PartnerRelation.find({
-    status: PartnerStatus.ACCEPTED,
-    mode: PartnerMode.MUTUAL,
-    $or: [{ senderId: userId }, { receiverId: userId }]
-  });
-
-  return mutualRelations.map(r =>
-    r.senderId.toString() === userId ? r.receiverId : r.senderId
-  );
-};
+import { getEligibleMonitorIds } from '../lib/taskAccess';
+import { z } from 'zod';
 
 // Fetch all workspaces for the logged-in user. Seed defaults if empty.
 export const getWorkspaces = async (req: any, res: Response) => {
@@ -37,14 +26,6 @@ export const getWorkspaces = async (req: any, res: Response) => {
         userId,
         isDefault: true
       });
-    }
-
-    const mutualPartnerIds = await getMutualPartnerIds(userId);
-    if (mutualPartnerIds.length > 0) {
-      await Workspace.updateMany(
-        { userId },
-        { $addToSet: { collaboratorIds: { $each: mutualPartnerIds } } }
-      );
     }
 
     // Fetch workspaces for user + workspaces where they are added as collaborator
@@ -91,7 +72,7 @@ export const createWorkspace = async (req: any, res: Response) => {
       name: nameTrimmed,
       userId: req.user.userId,
       isDefault: false,
-      collaboratorIds: await getMutualPartnerIds(req.user.userId)
+      collaboratorIds: []
     });
 
     await workspace.populate([
@@ -196,10 +177,10 @@ export const restoreDefaultWorkspaces = async (req: any, res: Response) => {
     const existingWork = await Workspace.findOne({ name: "Work", userId });
 
     if (!existingPersonal) {
-      await Workspace.create({ name: "Personal", userId, isDefault: true, collaboratorIds: await getMutualPartnerIds(userId) });
+      await Workspace.create({ name: "Personal", userId, isDefault: true, collaboratorIds: [] });
     }
     if (!existingWork) {
-      await Workspace.create({ name: "Work", userId, isDefault: true, collaboratorIds: await getMutualPartnerIds(userId) });
+      await Workspace.create({ name: "Work", userId, isDefault: true, collaboratorIds: [] });
     }
 
     const allWorkspaces = await Workspace.find({ userId })
@@ -214,6 +195,35 @@ export const restoreDefaultWorkspaces = async (req: any, res: Response) => {
   } catch (error) {
     console.error("Restore default workspaces error:", error);
     return res.status(500).json({ message: "An error occurred while restoring default workspaces." });
+  }
+};
+
+const WorkspaceMembersSchema = z.object({
+  collaboratorIds: z.array(z.string().regex(/^[a-f\d]{24}$/i, 'Invalid user ID')).max(100),
+}).strict();
+
+export const updateWorkspaceMembers = async (req: any, res: Response) => {
+  if (!req.user) return res.status(401).json({ message: 'Not authenticated' });
+  const parsed = WorkspaceMembersSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ errors: parsed.error.flatten().fieldErrors });
+  try {
+    const workspace = await Workspace.findOne({ _id: req.params.id, userId: req.user.userId });
+    if (!workspace) return res.status(404).json({ message: 'Workspace not found.' });
+    const requested = Array.from(new Set(parsed.data.collaboratorIds)).filter((id) => id !== req.user.userId);
+    const eligible = new Set(await getEligibleMonitorIds(req.user.userId));
+    if (!requested.every((id) => eligible.has(id))) {
+      return res.status(400).json({ message: 'Workspaces can only be shared with accepted, eligible accountability partners.' });
+    }
+    workspace.collaboratorIds = requested as any;
+    await workspace.save();
+    await workspace.populate([
+      { path: 'userId', select: 'id username name image' },
+      { path: 'collaboratorIds', select: 'id username name image' },
+    ]);
+    return res.status(200).json({ message: 'Workspace access updated.', workspace: workspace.toJSON() });
+  } catch (error) {
+    console.error('Update workspace members error:', error);
+    return res.status(500).json({ message: 'An error occurred while updating workspace access.' });
   }
 };
 

@@ -17,7 +17,7 @@ export interface PartnerRelation {
     image?: string;
   };
   mode: 'MUTUAL' | 'SINGLE';
-  status: 'PENDING' | 'ACCEPTED' | 'DECLINED';
+  status: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'TERMINATED' | 'CANCELLED';
   createdAt: string;
   updatedAt: string;
 }

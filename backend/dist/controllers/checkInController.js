@@ -17,7 +17,7 @@ const listCheckIns = async (req, res) => {
         const task = await Task_1.Task.findById(req.params.taskId);
         if (!task)
             return res.status(404).json({ message: 'Task not found.' });
-        if (!(0, taskAccess_1.canAccessTask)(task, req.user.userId)) {
+        if (!(await (0, taskAccess_1.getTaskPermissions)(task, req.user.userId)).canView) {
             return res.status(403).json({ message: 'You do not have permission to view check-ins for this task.' });
         }
         const checkIns = await CheckIn_1.CheckIn.find({ taskId: task._id })
@@ -42,29 +42,30 @@ const createCheckIn = async (req, res) => {
         const task = await Task_1.Task.findById(req.params.taskId);
         if (!task)
             return res.status(404).json({ message: 'Task not found.' });
-        if (!(0, taskAccess_1.canAccessTask)(task, req.user.userId)) {
+        const permissions = await (0, taskAccess_1.getTaskPermissions)(task, req.user.userId);
+        if (!permissions.canComment) {
             return res.status(403).json({ message: 'Only task collaborators can submit check-ins.' });
         }
-        if (parsed.data.status === CheckIn_1.CheckInStatus.COMPLETED) {
-            if (task.creatorId.toString() !== req.user.userId) {
-                return res.status(403).json({ message: 'Only the creator of the task can verify it as completed.' });
-            }
+        if (!permissions.isOwner && parsed.data.status === CheckIn_1.CheckInStatus.COMPLETED) {
+            return res.status(403).json({ message: 'Only the task owner can mark this task completed.' });
         }
         const checkIn = await CheckIn_1.CheckIn.create({
             taskId: task._id,
             userId: req.user.userId,
             status: parsed.data.status,
             notes: parsed.data.notes,
+            kind: permissions.isOwner ? CheckIn_1.CheckInKind.OWNER_PROGRESS : CheckIn_1.CheckInKind.PARTNER_FEEDBACK,
         });
-        if (parsed.data.status === CheckIn_1.CheckInStatus.COMPLETED) {
+        // A monitor's record is feedback only and never mutates owner progress.
+        if (permissions.isOwner && parsed.data.status === CheckIn_1.CheckInStatus.COMPLETED) {
             task.status = Task_1.TaskStatus.COMPLETED;
             await task.save();
         }
-        else if (parsed.data.status === CheckIn_1.CheckInStatus.MISSED) {
+        else if (permissions.isOwner && parsed.data.status === CheckIn_1.CheckInStatus.MISSED) {
             task.status = Task_1.TaskStatus.MISSED;
             await task.save();
         }
-        else if (task.status !== Task_1.TaskStatus.COMPLETED) {
+        else if (permissions.isOwner && task.status !== Task_1.TaskStatus.COMPLETED) {
             task.status = Task_1.TaskStatus.IN_PROGRESS;
             await task.save();
         }
@@ -73,7 +74,9 @@ const createCheckIn = async (req, res) => {
             userId,
             type: 'CHECK_IN_SUBMITTED',
             title: 'New check-in',
-            message: `A collaborator posted a ${parsed.data.status.toLowerCase().replace('_', ' ')} check-in on "${task.title}".`,
+            message: permissions.isOwner
+                ? `The owner posted a ${parsed.data.status.toLowerCase().replace('_', ' ')} progress update on "${task.title}".`
+                : `An accountability partner left feedback on "${task.title}".`,
             taskId: task._id,
         })));
         await checkIn.populate('userId', 'username name image');

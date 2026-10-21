@@ -1,7 +1,7 @@
 import api from './api';
 import type { Task, UserSummary } from './taskService';
 
-export type InviteStatus = 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'EXPIRED';
+export type InviteStatus = 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'EXPIRED' | 'CANCELLED';
 
 export interface Invite {
   id: string;
@@ -34,5 +34,8 @@ export const inviteService = {
   declineInvite: async (id: string): Promise<Invite> => {
     const response = await api.post(`/invites/${id}/decline`);
     return response.data.invite;
+  },
+  cancelInvite: async (id: string): Promise<void> => {
+    await api.delete(`/invites/${id}`);
   },
 };

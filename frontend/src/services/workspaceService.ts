@@ -38,5 +38,9 @@ export const workspaceService = {
   removePartnerFromWorkspace: async (id: string, partnerId: string): Promise<Workspace> => {
     const response = await api.delete(`/workspaces/${id}/partners/${partnerId}`);
     return response.data.workspace;
-  }
+  },
+  updateMembers: async (id: string, collaboratorIds: string[]): Promise<Workspace> => {
+    const response = await api.put(`/workspaces/${id}/members`, { collaboratorIds });
+    return response.data.workspace;
+  },
 };

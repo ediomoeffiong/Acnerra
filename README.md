@@ -1,71 +1,53 @@
-# Acnerra — Collaborative Accountability
+# Acnerra
 
-Acnerra is a collaborative accountability and goal-tracking web application designed to help partners stay productive together.
+Acnerra is a personal accountability and productivity application. A task always belongs to the person who created it. Accountability partners may monitor tasks that the owner explicitly shares, but cannot edit, complete, transfer, or delete them.
 
-## Features
+## Stack
 
-- **Authentication**: Secure login and registration.
-- **Task Management**: Create, assign, and track tasks.
-- **Accountability Partners**: 1:1 partnership for each task.
-- **Check-ins**: Real-time or near real-time updates on progress.
-- **Notifications**: Stay informed about invites and task updates.
-- **Dashboard**: A bird's-eye view of your productivity.
+- Frontend: React 19, Vite, TypeScript, Tailwind CSS, React Router, Axios
+- Backend: Node.js, Express 5, TypeScript, MongoDB, Mongoose, Zod
+- Authentication: signed HTTP-only session cookie or bearer token
 
-## Tech Stack
+## Local setup
 
-- **Framework**: [Next.js](https://nextjs.org/) (App Router)
-- **Language**: [TypeScript](https://www.typescriptlang.org/)
-- **Styling**: [Tailwind CSS](https://tailwindcss.com/)
-- **Database**: [PostgreSQL](https://www.postgresql.org/)
-- **ORM**: [Prisma](https://www.prisma.io/)
-- **Auth**: [Auth.js](https://authjs.dev/) (Planned)
+```powershell
+cd backend
+npm install
+Copy-Item .env.example .env # if an example is present; otherwise create .env
+# Set MONGO_URI and AUTH_SECRET
+npm run dev
+```
 
-## Getting Started
+In another terminal:
 
-### Prerequisites
+```powershell
+cd frontend
+npm install
+npm run dev
+```
 
-- Node.js 18+ 
-- PostgreSQL instance
+## Stage 1 ownership and sharing rules
 
-### Installation
+- `ownerId` is authoritative; `creatorId` preserves the original creator. Unmigrated records safely fall back to `creatorId`.
+- The server generates both identities during creation. Client-supplied identity fields are rejected.
+- New tasks default to `PRIVATE` and have no monitoring partners.
+- `SELECTED_PARTNERS` grants access only to explicitly selected users who still have an accepted, directionally valid accountability relationship.
+- `WORKSPACE` access requires explicit task visibility plus explicit workspace membership and a valid accountability relationship. Workspace membership never overrides a private task.
+- Only the owner can edit details, change status, manage sharing, move the task, complete it, or delete it.
+- Monitors may view and leave feedback. Their feedback never mutates owner progress.
+- Ending a relationship preserves history but revokes relationship-derived task access.
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/your-username/acnerra.git
-   cd acnerra
-   ```
+See [docs/STAGE1_AUDIT.md](docs/STAGE1_AUDIT.md) for the audit and [docs/STAGE1_MIGRATION.md](docs/STAGE1_MIGRATION.md) before deployment.
 
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
+## Verification
 
-3. Setup environment variables:
-   ```bash
-   cp .env.example .env
-   ```
-   Edit `.env` and provide your database connection string.
+```powershell
+cd backend
+npm test
 
-4. Initialize the database:
-   ```bash
-   npx prisma generate
-   npx prisma db push
-   ```
+cd ..\frontend
+npm run build
+npm run lint
+```
 
-5. Run the development server:
-   ```bash
-   npm run dev
-   ```
-
-## Project Structure
-
-- `src/app`: Routes and pages.
-- `src/components`: UI components.
-- `src/lib`: Shared utilities and database clients.
-- `src/services`: Business logic layer.
-- `src/types`: TypeScript definitions.
-- `prisma`: Database schema and migrations.
-
-## License
-
-MIT
+The backend integration suite uses an isolated in-memory MongoDB instance and does not touch the configured application database.

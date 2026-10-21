@@ -8,6 +8,7 @@ var InviteStatus;
     InviteStatus["ACCEPTED"] = "ACCEPTED";
     InviteStatus["DECLINED"] = "DECLINED";
     InviteStatus["EXPIRED"] = "EXPIRED";
+    InviteStatus["CANCELLED"] = "CANCELLED";
 })(InviteStatus || (exports.InviteStatus = InviteStatus = {}));
 const InviteSchema = new mongoose_1.Schema({
     senderId: { type: mongoose_1.Schema.Types.ObjectId, ref: 'User', required: true },

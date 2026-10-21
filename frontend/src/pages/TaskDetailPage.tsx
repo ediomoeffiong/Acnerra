@@ -13,6 +13,7 @@ import { checkInService } from "../services/checkInService";
 import type { CheckIn, CheckInStatus } from "../services/checkInService";
 import { workspaceService } from "../services/workspaceService";
 import type { Workspace } from "../services/workspaceService";
+import { useAuth } from "../context/AuthContext";
 import { 
   ArrowLeft, Calendar, Trash2, Edit2, CheckCircle2, 
   Clock, Circle, ShieldAlert, AlertCircle, Sparkles, MessageSquarePlus,
@@ -20,6 +21,7 @@ import {
 } from "lucide-react";
 
 export default function TaskDetailPage() {
+  const { user } = useAuth();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   
@@ -52,6 +54,14 @@ export default function TaskDetailPage() {
     const w = workspaces.find(item => item.id === task.workspaceId || (item as any)._id === task.workspaceId);
     return w ? w.name : null;
   }, [task?.workspaceId, workspaces]);
+  const owner = task?.ownerId || task?.creatorId;
+  const creator = task?.creatorId;
+  const ownerId = typeof owner === "string" ? owner : owner?.id;
+  const creatorId = typeof creator === "string" ? creator : creator?.id;
+  const isOwner = task?.permissions?.isOwner ?? ownerId === user?.id;
+  const ownerLabel = ownerId === user?.id ? "You" : `@${typeof owner === "string" ? "owner" : owner?.username || "owner"}`;
+  const creatorLabel = creatorId === user?.id ? "You" : `@${typeof creator === "string" ? "creator" : creator?.username || "creator"}`;
+  const monitoringPartners = task?.sharedWithIds || task?.collaboratorIds || [];
   const formatToDateTimeLocal = (dateString?: string | null) => {
     if (!dateString) return "";
     const d = new Date(dateString);
@@ -249,14 +259,14 @@ export default function TaskDetailPage() {
           </Link>
           {!loading && !error && task && (
             <div className="flex gap-2">
-              <Button 
+              {isOwner && <Button
                 onClick={() => setIsEditModalOpen(true)} 
                 variant="outline" 
                 size="sm"
                 className="h-8 font-semibold text-xs border-zinc-800 hover:bg-zinc-900"
               >
                 <Edit2 className="mr-1 h-3.5 w-3.5" /> Edit details
-              </Button>
+              </Button>}
               <Button
                 onClick={() => setIsCheckInModalOpen(true)}
                 variant="outline"
@@ -265,14 +275,14 @@ export default function TaskDetailPage() {
               >
                 <MessageSquarePlus className="mr-1 h-3.5 w-3.5" /> Check in
               </Button>
-              <Button 
+              {isOwner && <Button
                 onClick={() => setIsDeleteModalOpen(true)} 
                 variant="outline" 
                 size="sm"
                 className="h-8 font-semibold text-xs border-red-950 text-red-400 hover:bg-red-950/20"
               >
                 <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
-              </Button>
+              </Button>}
             </div>
           )}
         </div>
@@ -317,12 +327,12 @@ export default function TaskDetailPage() {
               <div className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-900/80 pb-5">
                 <div className="flex items-center gap-3">
                   {getStatusBadge(task.status)}
-                  <button 
+                  {isOwner && <button
                     onClick={handleQuickStatusCycle}
                     className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold uppercase tracking-wider underline cursor-pointer"
                   >
                     Quick Advance
-                  </button>
+                  </button>}
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wide">Priority:</span>
@@ -332,6 +342,7 @@ export default function TaskDetailPage() {
 
               {/* Title and Description */}
               <div className="space-y-3.5">
+                <p className="text-xs font-semibold text-indigo-300">{isOwner ? "Your task" : `${ownerLabel}'s task — You're monitoring`}</p>
                 <div className="flex items-center gap-2 flex-wrap">
                   <h1 className="text-2xl font-extrabold text-zinc-100 tracking-tight leading-tight">
                     {task.title}
@@ -357,6 +368,12 @@ export default function TaskDetailPage() {
                 )}
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 border-t border-zinc-900/60 pt-5 text-xs">
+                <div><span className="block text-[10px] uppercase tracking-wider text-zinc-500">Task owner</span><span className="font-semibold text-zinc-200">{ownerLabel}</span></div>
+                <div><span className="block text-[10px] uppercase tracking-wider text-zinc-500">Created by</span><span className="font-semibold text-zinc-200">{creatorLabel}</span></div>
+                <div><span className="block text-[10px] uppercase tracking-wider text-zinc-500">Accountability partners</span><span className="font-semibold text-zinc-200">{monitoringPartners.length ? monitoringPartners.map((partner) => `@${typeof partner === "string" ? "partner" : partner.username}`).join(", ") : "None"}</span></div>
+              </div>
+
               {/* Due date & Timeline details */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-zinc-900/60 pt-5">
                 <div className="flex items-center gap-2.5 p-3 rounded-lg bg-zinc-950/20 border border-zinc-900/40">
@@ -376,7 +393,7 @@ export default function TaskDetailPage() {
                   <div className="flex flex-col">
                     <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Task Origin</span>
                     <span className="text-xs font-semibold text-zinc-200 mt-0.5">
-                      Created by you on {new Date(task.createdAt).toLocaleDateString()}
+                      Created by {creatorLabel} on {new Date(task.createdAt).toLocaleDateString()}
                     </span>
                   </div>
                 </div>
@@ -386,7 +403,7 @@ export default function TaskDetailPage() {
             <Card className="p-5 border-zinc-900 bg-zinc-950/20 space-y-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h3 className="text-xs font-bold uppercase tracking-wide text-zinc-200">Check-in History</h3>
+                  <h3 className="text-xs font-bold uppercase tracking-wide text-zinc-200">Progress &amp; Feedback History</h3>
                   <p className="text-[11px] text-zinc-500 mt-1">Chronological accountability updates for this task.</p>
                 </div>
                 <Button onClick={() => setIsCheckInModalOpen(true)} size="sm" className="h-8 text-xs">
@@ -401,7 +418,7 @@ export default function TaskDetailPage() {
                     <div key={checkIn.id} className="border-l-2 border-indigo-900 pl-3 py-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge variant={checkIn.status === "COMPLETED" ? "success" : checkIn.status === "MISSED" ? "destructive" : "warning"} className="text-[9px]">
-                          {checkIn.status.replace("_", " ").toLowerCase()}
+                          {checkIn.kind === "PARTNER_FEEDBACK" ? "partner feedback" : checkIn.status.replace("_", " ").toLowerCase()}
                         </Badge>
                         <span className="text-xs font-semibold text-zinc-300">@{checkIn.userId?.username || "collaborator"}</span>
                         <span className="text-[10px] text-zinc-500">{new Date(checkIn.createdAt).toLocaleString()}</span>
@@ -419,7 +436,7 @@ export default function TaskDetailPage() {
               <div className="space-y-1">
                 <h4 className="text-xs font-bold text-zinc-200 tracking-wide uppercase">Accountability Focus</h4>
                 <p className="text-[11px] text-zinc-400 leading-relaxed">
-                  This task is tied to your individual space. Any status changes or updates are tracked in your activity stream. Maintain your velocity targets to ensure consistent progress.
+                  {isOwner ? "You own this task and are responsible for its details, progress, status, and completion. Partners can monitor and leave feedback only." : "You're an accountability partner for this task. You can view progress and leave feedback, but only the owner can edit details, change status, complete, or delete it."}
                 </p>
               </div>
             </Card>
@@ -574,10 +591,10 @@ export default function TaskDetailPage() {
         <Modal
           isOpen={isCheckInModalOpen}
           onClose={() => setIsCheckInModalOpen(false)}
-          title="Submit Check-in"
+          title={isOwner ? "Submit progress update" : "Leave partner feedback"}
         >
           <form onSubmit={handleSubmitCheckIn} className="space-y-4">
-            <div className="space-y-1.5">
+            {isOwner && <div className="space-y-1.5">
               <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Status</label>
               <select
                 value={checkInStatus}
@@ -588,7 +605,7 @@ export default function TaskDetailPage() {
                 <option value="IN_PROGRESS">In Progress</option>
                 <option value="MISSED">Missed</option>
               </select>
-            </div>
+            </div>}
             <div className="space-y-1.5">
               <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Notes</label>
               <textarea
@@ -596,7 +613,7 @@ export default function TaskDetailPage() {
                 onChange={(e) => setCheckInNotes(e.target.value)}
                 rows={4}
                 className="flex w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600"
-                placeholder="Optional context for your partner"
+                placeholder={isOwner ? "Optional context for your accountability partners" : "Encouragement, observations, or feedback for the task owner"}
               />
             </div>
             <div className="flex justify-end gap-2 pt-2 border-t border-zinc-900">
