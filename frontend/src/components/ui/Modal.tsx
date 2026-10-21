@@ -8,9 +8,10 @@ export interface ModalProps {
   title?: string;
   children: React.ReactNode;
   className?: string;
+  size?: "sm" | "md" | "lg" | "xl";
 }
 
-const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, className }) => {
+const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, className, size = "md" }) => {
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -29,6 +30,13 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, classNa
 
   if (!isOpen) return null;
 
+  const sizeClasses = {
+    sm: "max-w-md",
+    md: "max-w-lg",
+    lg: "max-w-2xl",
+    xl: "max-w-4xl",
+  }[size];
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
@@ -40,7 +48,8 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, classNa
       {/* Modal Container */}
       <div
         className={cn(
-          "relative z-10 w-full max-w-lg rounded-xl border border-zinc-800 bg-zinc-950 p-6 shadow-2xl transition-all duration-300 transform scale-100",
+          "relative z-10 w-full rounded-xl border border-zinc-800 bg-zinc-950 p-6 shadow-2xl transition-all duration-300 transform scale-100",
+          sizeClasses,
           className
         )}
       >
@@ -53,13 +62,13 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, classNa
           )}
           <button
             onClick={onClose}
-            className="rounded-lg p-1 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900 transition-colors"
+            className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100 transition-colors focus:outline-none focus:ring-2 focus:ring-zinc-700"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        {/* Content */}
+        {/* Body Content */}
         <div>{children}</div>
       </div>
     </div>

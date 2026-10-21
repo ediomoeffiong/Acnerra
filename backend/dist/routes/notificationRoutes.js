@@ -8,5 +8,8 @@ const router = (0, express_1.Router)();
 router.use(authMiddleware_1.authMiddleware);
 router.get('/', notificationController_1.listNotifications);
 router.patch('/read-all', notificationController_1.markAllNotificationsRead);
+router.get('/preferences', notificationController_1.getNotificationPreferences);
+router.put('/preferences', notificationController_1.updateNotificationPreferences);
 router.patch('/:id/read', (0, validateObjectId_1.validateObjectId)('id'), notificationController_1.markNotificationRead);
+router.delete('/:id', (0, validateObjectId_1.validateObjectId)('id'), notificationController_1.deleteNotification);
 exports.default = router;

@@ -18,9 +18,13 @@ export interface PartnerRelation {
   };
   mode: 'MUTUAL' | 'SINGLE';
   status: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'TERMINATED' | 'CANCELLED';
+  name?: string;
+  username?: string;
   createdAt: string;
   updatedAt: string;
 }
+
+export type Partner = PartnerRelation;
 
 export const partnersService = {
   getPartners: async (): Promise<PartnerRelation[]> => {
@@ -33,7 +37,17 @@ export const partnersService = {
     return response.data;
   },
 
+  sendInvite: async (username: string, mode: 'MUTUAL' | 'SINGLE'): Promise<any> => {
+    const response = await api.post('/profiles/partners/invite', { username, mode });
+    return response.data;
+  },
+
   acceptPartnerInvite: async (relationId: string): Promise<any> => {
+    const response = await api.post(`/profiles/partners/accept/${relationId}`);
+    return response.data;
+  },
+
+  acceptInvite: async (relationId: string): Promise<any> => {
     const response = await api.post(`/profiles/partners/accept/${relationId}`);
     return response.data;
   },
@@ -43,8 +57,13 @@ export const partnersService = {
     return response.data;
   },
 
+  declineInvite: async (relationId: string): Promise<any> => {
+    const response = await api.post(`/profiles/partners/decline/${relationId}`);
+    return response.data;
+  },
+
   removePartner: async (relationId: string): Promise<any> => {
     const response = await api.delete(`/profiles/partners/${relationId}`);
     return response.data;
-  }
+  },
 };

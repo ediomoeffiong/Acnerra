@@ -1,13 +1,21 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import api from '../services/api';
 
-interface User {
+export interface User {
   id: string;
   username: string;
   email: string;
   name?: string;
   bio?: string;
   image?: string;
+  xp?: number;
+  level?: number;
+  currentStreak?: number;
+  longestStreak?: number;
+  achievements?: Array<{ id: string; name: string; description: string; icon: string; unlockedAt: string }>;
+  onboardingCompleted?: boolean;
+  onboardingStep?: number;
+  preferences?: any;
 }
 
 interface AuthContextType {
@@ -17,6 +25,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
   checkAuth: () => Promise<void>;
   updateUser: (userData: User) => void;
+  completeOnboarding: (step?: number) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -30,7 +39,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const response = await api.get('/auth/me');
       setUser(response.data.user);
       localStorage.setItem("acnerra_logged_in", "true");
-    } catch (error) {
+    } catch {
       setUser(null);
       localStorage.removeItem("acnerra_logged_in");
     } finally {
@@ -67,8 +76,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(userData);
   };
 
+  const completeOnboarding = async (step: number = 6) => {
+    try {
+      await api.patch('/profiles/onboarding', { completed: true, step });
+      if (user) {
+        setUser({ ...user, onboardingCompleted: true, onboardingStep: step });
+      }
+    } catch (error) {
+      console.error('Failed to save onboarding state:', error);
+      if (user) {
+        setUser({ ...user, onboardingCompleted: true, onboardingStep: step });
+      }
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, checkAuth, updateUser }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, checkAuth, updateUser, completeOnboarding }}>
       {children}
     </AuthContext.Provider>
   );

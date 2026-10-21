@@ -16,6 +16,23 @@ const LoginSchema = z.object({
   password: z.string().min(1, "Password is required"),
 });
 
+const formatAuthUser = (user: any) => ({
+  id: user._id.toString(),
+  username: user.username,
+  email: user.email,
+  name: user.name || '',
+  bio: user.bio || '',
+  image: user.image || null,
+  xp: user.xp || 0,
+  level: user.level || 1,
+  currentStreak: user.currentStreak || 0,
+  longestStreak: user.longestStreak || 0,
+  achievements: user.achievements || [],
+  onboardingCompleted: user.onboardingCompleted || false,
+  onboardingStep: user.onboardingStep || 0,
+  preferences: user.preferences || {},
+});
+
 export const register = async (req: Request, res: Response) => {
   const validatedFields = RegisterSchema.safeParse(req.body);
 
@@ -45,6 +62,8 @@ export const register = async (req: Request, res: Response) => {
       email,
       password: hashedPassword,
       name,
+      onboardingCompleted: false,
+      onboardingStep: 0,
     }).save();
 
     const expires = new Date(Date.now() + SESSION_DURATION);
@@ -62,14 +81,7 @@ export const register = async (req: Request, res: Response) => {
     return res.status(201).json({
       message: "User registered successfully",
       token: session,
-      user: {
-        id: user._id.toString(),
-        username: user.username,
-        email: user.email,
-        name: user.name,
-        bio: user.bio,
-        image: user.image,
-      },
+      user: formatAuthUser(user),
     });
   } catch (error) {
     console.error("Registration error:", error);
@@ -124,14 +136,7 @@ export const login = async (req: Request, res: Response) => {
     return res.status(200).json({
       message: "Login successful",
       token: session,
-      user: {
-        id: user._id.toString(),
-        username: user.username,
-        email: user.email,
-        name: user.name,
-        bio: user.bio,
-        image: user.image,
-      },
+      user: formatAuthUser(user),
     });
   } catch (error) {
     console.error("Login error:", error);
@@ -157,13 +162,13 @@ export const me = async (req: any, res: Response) => {
   }
 
   try {
-    const user = await User.findById(req.user.userId).select('id username email name bio image');
+    const user = await User.findById(req.user.userId);
 
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    return res.status(200).json({ user: user.toJSON() });
+    return res.status(200).json({ user: formatAuthUser(user) });
   } catch (error) {
     return res.status(500).json({ message: "Internal server error" });
   }

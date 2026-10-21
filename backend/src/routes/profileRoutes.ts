@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getProfileByUsername, updateProfile, searchProfiles } from '../controllers/profileController';
+import { getProfileByUsername, updateProfile, searchProfiles, updateOnboardingState } from '../controllers/profileController';
 import { getPartners, sendPartnerInvite, acceptPartnerInvite, declinePartnerInvite, removePartner } from '../controllers/partnerController';
 import { authMiddleware } from '../middleware/authMiddleware';
 import { rateLimit } from '../middleware/rateLimit';
@@ -13,6 +13,9 @@ router.post('/partners/invite', authMiddleware, rateLimit('partner-invite', 30, 
 router.post('/partners/accept/:id', authMiddleware, validateObjectId('id'), acceptPartnerInvite);
 router.post('/partners/decline/:id', authMiddleware, validateObjectId('id'), declinePartnerInvite);
 router.delete('/partners/:partnerId', authMiddleware, validateObjectId('partnerId'), removePartner);
+
+// Protected route to update onboarding state
+router.patch('/onboarding', authMiddleware, updateOnboardingState);
 
 // Protected route to search profiles by username or email
 router.get('/', authMiddleware, searchProfiles);

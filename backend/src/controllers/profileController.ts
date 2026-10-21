@@ -21,7 +21,7 @@ export const getProfileByUsername = async (req: Request, res: Response) => {
 
   try {
     const user = await User.findOne({ username: { $regex: new RegExp(`^${username}$`, 'i') } })
-      .select('id username name bio image createdAt');
+      .select('id username name bio image createdAt xp level achievements');
 
     if (!user) {
       return res.status(404).json({
@@ -46,6 +46,9 @@ export const getProfileByUsername = async (req: Request, res: Response) => {
         bio: user.bio || '',
         image: user.image || '',
         createdAt: user.createdAt,
+        xp: user.xp || 0,
+        level: user.level || 1,
+        achievements: user.achievements || [],
       },
       stats: {
         completedTasks: completedTasksCount,
@@ -270,5 +273,38 @@ export const removePartner = async (req: any, res: Response) => {
   } catch (error) {
     console.error("Remove partner error:", error);
     return res.status(500).json({ message: "An error occurred while removing partner." });
+  }
+};
+
+export const updateOnboardingState = async (req: any, res: Response) => {
+  if (!req.user) {
+    return res.status(401).json({ message: "Not authenticated" });
+  }
+
+  const { completed, step } = req.body;
+
+  try {
+    const user = await User.findById(req.user.userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    if (typeof completed === 'boolean') {
+      user.onboardingCompleted = completed;
+    }
+    if (typeof step === 'number') {
+      user.onboardingStep = step;
+    }
+
+    await user.save();
+
+    return res.status(200).json({
+      message: "Onboarding state updated.",
+      onboardingCompleted: user.onboardingCompleted,
+      onboardingStep: user.onboardingStep,
+    });
+  } catch (error) {
+    console.error("Update onboarding state error:", error);
+    return res.status(500).json({ message: "An error occurred while updating onboarding state." });
   }
 };

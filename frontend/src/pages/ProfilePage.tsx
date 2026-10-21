@@ -20,6 +20,9 @@ interface ProfileUserData {
   bio: string;
   image: string;
   createdAt: string;
+  xp?: number;
+  level?: number;
+  achievements?: Array<{ id: string; name: string; description: string; icon: string; unlockedAt: string }>;
 }
 
 interface ProfileStats {
@@ -70,12 +73,6 @@ export default function ProfilePage() {
   React.useEffect(() => {
     if (username) {
       fetchProfile();
-      
-      const interval = setInterval(() => {
-        fetchProfile(true); // background load every 5 seconds
-      }, 5000);
-      
-      return () => clearInterval(interval);
     }
   }, [username]);
 
@@ -389,6 +386,49 @@ export default function ProfilePage() {
             </div>
 
             {renderStreakCalendar()}
+
+            {/* Achievements & Level Showcase */}
+            <div className="space-y-4">
+              <h2 className="text-base font-bold text-zinc-200 tracking-tight flex items-center gap-1.5">
+                <Sparkles className="h-4.5 w-4.5 text-indigo-400" />
+                Level & Achievements
+              </h2>
+
+              <Card className="p-6 border-zinc-900 bg-zinc-950/40 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-800/80">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 font-bold flex items-center justify-center">
+                      L{profileUser.level || 1}
+                    </div>
+                    <div>
+                      <div className="text-sm font-bold text-zinc-100">Level {profileUser.level || 1} Achiever</div>
+                      <div className="text-xs text-zinc-400">{profileUser.xp || 0} Total Experience Points</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <span className="text-xs font-semibold text-zinc-300 block">
+                    Earned Badges ({profileUser.achievements?.length || 0})
+                  </span>
+                  {(!profileUser.achievements || profileUser.achievements.length === 0) ? (
+                    <p className="text-xs text-zinc-500 italic">No achievements unlocked yet. Complete commitments and build streaks to earn badges.</p>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+                      {profileUser.achievements.map((ach) => (
+                        <div key={ach.id} className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 space-y-1">
+                          <div className="text-xs font-bold text-zinc-200 flex items-center gap-1.5">
+                            <span>🏆</span>
+                            <span>{ach.name}</span>
+                          </div>
+                          <p className="text-[11px] text-zinc-400 leading-relaxed">{ach.description}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </Card>
+            </div>
 
             {/* Profile milestones / accountability feed */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

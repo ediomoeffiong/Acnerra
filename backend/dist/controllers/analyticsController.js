@@ -5,13 +5,26 @@ const CheckIn_1 = require("../models/CheckIn");
 const Task_1 = require("../models/Task");
 const Workspace_1 = require("../models/Workspace");
 const PartnerRelation_1 = require("../models/PartnerRelation");
-const getDateRange = (range) => {
+const ProgressRequest_1 = require("../models/ProgressRequest");
+const streak_1 = require("../lib/streak");
+const getDateRange = (range, customStart, customEnd) => {
     const now = new Date();
-    const start = new Date(now);
-    if (range === 'monthly') {
+    let start = new Date(now);
+    if (range === 'custom' && customStart) {
+        const s = new Date(customStart);
+        const e = customEnd ? new Date(customEnd) : now;
+        if (!Number.isNaN(s.getTime())) {
+            return { start: s, end: Number.isNaN(e.getTime()) ? now : e };
+        }
+    }
+    if (range === '90d') {
+        start.setDate(now.getDate() - 90);
+    }
+    else if (range === 'monthly' || range === '30d') {
         start.setDate(now.getDate() - 30);
     }
     else {
+        // default 7 days ('weekly' or '7d')
         start.setDate(now.getDate() - 7);
     }
     return { start, end: now };
@@ -19,107 +32,121 @@ const getDateRange = (range) => {
 const getAnalytics = async (req, res) => {
     if (!req.user)
         return res.status(401).json({ message: 'Not authenticated' });
-    const range = typeof req.query.range === 'string' ? req.query.range : 'weekly';
-    const { start, end } = getDateRange(range);
+    const range = typeof req.query.range === 'string' ? req.query.range : '7d';
+    const { start, end } = getDateRange(range, req.query.start, req.query.end);
     const userId = req.user.userId;
     try {
-        const tasks = await Task_1.Task.find({
+        // 1. Personal tasks (strictly owned by authenticated user)
+        const personalTasks = await Task_1.Task.find({
             $or: [
                 { ownerId: userId },
                 { ownerId: null, creatorId: userId },
             ],
             createdAt: { $lte: end },
         });
-        const taskIds = tasks.map((task) => task._id);
+        const personalTaskIds = personalTasks.map((task) => task._id);
+        // 2. Personal check-ins
         const checkIns = await CheckIn_1.CheckIn.find({
-            taskId: { $in: taskIds },
+            taskId: { $in: personalTaskIds },
             createdAt: { $gte: start, $lte: end },
             $or: [
                 { kind: CheckIn_1.CheckInKind.OWNER_PROGRESS },
                 { kind: null, userId },
             ],
         }).sort({ createdAt: 1 });
-        const completedTasks = tasks.filter((task) => task.status === Task_1.TaskStatus.COMPLETED).length;
-        const completedCheckIns = checkIns.filter((checkIn) => checkIn.status === CheckIn_1.CheckInStatus.COMPLETED).length;
-        const inProgressCheckIns = checkIns.filter((checkIn) => checkIn.status === CheckIn_1.CheckInStatus.IN_PROGRESS).length;
-        const missedCheckIns = checkIns.filter((checkIn) => checkIn.status === CheckIn_1.CheckInStatus.MISSED).length;
-        const activityByDay = checkIns.reduce((acc, checkIn) => {
-            const key = new Date(checkIn.createdAt).toISOString().slice(0, 10);
-            acc[key] = (acc[key] || 0) + 1;
-            return acc;
-        }, {});
-        // Match the workspace endpoint: show owned workspaces and workspaces explicitly shared with this user.
-        const rawWorkspacesList = await Workspace_1.Workspace.find({
-            $or: [
-                { userId },
-                { collaboratorIds: userId }
-            ]
-        })
-            .populate('userId', 'id username name')
-            .sort({ createdAt: 1 });
-        const workspaceMap = new Map();
-        rawWorkspacesList.forEach((workspace) => {
-            workspaceMap.set(workspace._id.toString(), workspace);
+        const completedTasks = personalTasks.filter((task) => task.status === Task_1.TaskStatus.COMPLETED);
+        const now = new Date();
+        const overdueTasks = personalTasks.filter((task) => task.status !== Task_1.TaskStatus.COMPLETED && task.dueDate && new Date(task.dueDate) < now);
+        // Milestones metrics
+        let totalMilestones = 0;
+        let completedMilestones = 0;
+        personalTasks.forEach((t) => {
+            (t.milestones || []).forEach((m) => {
+                totalMilestones++;
+                if (m.status === Task_1.MilestoneStatus.COMPLETED)
+                    completedMilestones++;
+            });
         });
-        const workspacesList = Array.from(workspaceMap.values());
-        // Calculate workspace metrics
-        const workspaceStats = workspacesList.map(ws => {
-            const wsTasks = tasks.filter(t => t.workspaceId?.toString() === ws._id.toString());
+        // Recurring task adherence
+        const recurringTasks = personalTasks.filter((t) => t.isRecurringInstance || (t.recurrence && t.recurrence.frequency !== 'NONE'));
+        const recurringCompleted = recurringTasks.filter((t) => t.status === Task_1.TaskStatus.COMPLETED);
+        const recurringAdherence = recurringTasks.length ? Math.round((recurringCompleted.length / recurringTasks.length) * 100) : 100;
+        // Check-in status counts
+        const completedCheckIns = checkIns.filter((c) => c.status === CheckIn_1.CheckInStatus.COMPLETED).length;
+        const inProgressCheckIns = checkIns.filter((c) => c.status === CheckIn_1.CheckInStatus.IN_PROGRESS).length;
+        const missedCheckIns = checkIns.filter((c) => c.status === CheckIn_1.CheckInStatus.MISSED).length;
+        // Daily activity trends
+        const activityByDay = {};
+        // Initialize all dates in range with 0
+        const cursor = new Date(start);
+        while (cursor <= end) {
+            const key = cursor.toISOString().slice(0, 10);
+            activityByDay[key] = { checkIns: 0, completions: 0 };
+            cursor.setDate(cursor.getDate() + 1);
+        }
+        checkIns.forEach((checkIn) => {
+            const key = new Date(checkIn.createdAt).toISOString().slice(0, 10);
+            if (activityByDay[key]) {
+                activityByDay[key].checkIns += 1;
+            }
+        });
+        completedTasks.forEach((task) => {
+            const key = new Date(task.updatedAt).toISOString().slice(0, 10);
+            if (activityByDay[key]) {
+                activityByDay[key].completions += 1;
+            }
+        });
+        // Workspaces metrics
+        const rawWorkspacesList = await Workspace_1.Workspace.find({
+            $or: [{ userId }, { collaboratorIds: userId }],
+        }).sort({ createdAt: 1 });
+        const workspaceStats = rawWorkspacesList.map((ws) => {
+            const wsTasks = personalTasks.filter((t) => t.workspaceId?.toString() === ws._id.toString());
             const total = wsTasks.length;
-            const completed = wsTasks.filter(t => t.status === Task_1.TaskStatus.COMPLETED).length;
-            const completionRate = total ? Math.round((completed / total) * 100) : 0;
-            const now = new Date();
-            const overdue = wsTasks.filter(t => t.status !== Task_1.TaskStatus.COMPLETED && t.dueDate && new Date(t.dueDate) < now).length;
+            const completed = wsTasks.filter((t) => t.status === Task_1.TaskStatus.COMPLETED).length;
+            const wsOverdue = wsTasks.filter((t) => t.status !== Task_1.TaskStatus.COMPLETED && t.dueDate && new Date(t.dueDate) < now).length;
             return {
                 workspaceId: ws._id.toString(),
                 name: ws.name,
-                owner: ws.userId,
                 isDefault: ws.isDefault,
                 totalTasks: total,
                 completedTasks: completed,
-                completionRate,
-                overdueTasks: overdue
+                completionRate: total ? Math.round((completed / total) * 100) : 0,
+                overdueTasks: wsOverdue,
             };
         });
-        // Fetch all accepted partner relationships
+        // Streak stats
+        const streakData = await (0, streak_1.calculateUserStreak)(userId);
+        // 3. Partner Insights (tasks monitored, feedback given, pending verifications, progress requests)
+        const monitoredTasks = await Task_1.Task.find({
+            $or: [{ sharedWithIds: userId }, { collaboratorIds: userId }, { partnerId: userId }],
+            ownerId: { $ne: userId },
+            visibility: { $ne: Task_1.TaskVisibility.PRIVATE },
+        });
+        const [feedbackGivenCount, pendingVerificationsForMe, pendingRequestsForMe] = await Promise.all([
+            CheckIn_1.CheckIn.countDocuments({ userId, kind: CheckIn_1.CheckInKind.PARTNER_FEEDBACK, createdAt: { $gte: start, $lte: end } }),
+            Task_1.Task.countDocuments({ verifierId: userId, verificationStatus: Task_1.VerificationStatus.PENDING, status: Task_1.TaskStatus.COMPLETED }),
+            ProgressRequest_1.ProgressRequest.countDocuments({ requesterId: userId, status: ProgressRequest_1.ProgressRequestStatus.PENDING }),
+        ]);
+        // Partner relationships
         const partnerRelations = await PartnerRelation_1.PartnerRelation.find({
             status: PartnerRelation_1.PartnerStatus.ACCEPTED,
-            $or: [{ senderId: userId }, { receiverId: userId }]
-        })
-            .populate('senderId', 'id username name image')
-            .populate('receiverId', 'id username name image');
-        const mutualPartnersCount = partnerRelations.filter(r => r.mode === PartnerRelation_1.PartnerMode.MUTUAL).length;
-        // Single partners are those that monitor the user (senderId is the user whose tasks are monitored)
-        const singlePartnersCount = partnerRelations.filter(r => r.mode === PartnerRelation_1.PartnerMode.SINGLE && r.senderId._id.toString() === userId).length;
-        const partnerStats = partnerRelations.map(r => {
+            $or: [{ senderId: userId }, { receiverId: userId }],
+        }).populate('senderId receiverId', 'id username name image');
+        const partnerStats = partnerRelations.map((r) => {
             const partnerUser = r.senderId._id.toString() === userId ? r.receiverId : r.senderId;
-            // Calculate shared tasks with this partner
-            const sharedTasks = tasks.filter(t => {
-                const creatorIdStr = t.creatorId.toString();
-                const partnerIdStr = t.partnerId?.toString();
-                const collaboratorIdsStr = t.collaboratorIds?.map((id) => id.toString()) || [];
-                const isCreatorMe = creatorIdStr === userId;
-                const isCreatorPartner = creatorIdStr === partnerUser._id.toString();
-                if (isCreatorMe && (partnerIdStr === partnerUser._id.toString() || collaboratorIdsStr.includes(partnerUser._id.toString()))) {
-                    return true;
-                }
-                if (isCreatorPartner && (partnerIdStr === userId || collaboratorIdsStr.includes(userId))) {
-                    return true;
-                }
-                return false;
-            });
+            const sharedTasks = personalTasks.filter((t) => t.sharedWithIds?.some((id) => id.toString() === partnerUser._id.toString()));
             const total = sharedTasks.length;
-            const completed = sharedTasks.filter(t => t.status === Task_1.TaskStatus.COMPLETED).length;
-            const completionRate = total ? Math.round((completed / total) * 100) : 0;
+            const completed = sharedTasks.filter((t) => t.status === Task_1.TaskStatus.COMPLETED).length;
             return {
-                partnerId: partnerUser.id,
+                partnerId: partnerUser._id.toString(),
                 username: partnerUser.username,
                 name: partnerUser.name || partnerUser.username,
                 image: partnerUser.image,
                 mode: r.mode,
                 totalTasks: total,
                 completedTasks: completed,
-                completionRate
+                completionRate: total ? Math.round((completed / total) * 100) : 0,
             };
         });
         return res.status(200).json({
@@ -127,21 +154,34 @@ const getAnalytics = async (req, res) => {
             start,
             end,
             metrics: {
-                totalTasks: tasks.length,
-                completedTasks,
-                completionRate: tasks.length ? Math.round((completedTasks / tasks.length) * 100) : 0,
+                totalTasks: personalTasks.length,
+                completedTasks: completedTasks.length,
+                completionRate: personalTasks.length ? Math.round((completedTasks.length / personalTasks.length) * 100) : 0,
+                overdueTasks: overdueTasks.length,
                 totalCheckIns: checkIns.length,
                 checkInConsistency: checkIns.length ? Math.round((completedCheckIns / checkIns.length) * 100) : 0,
-                activityFrequency: checkIns.length,
                 completedCheckIns,
                 inProgressCheckIns,
                 missedCheckIns,
-                mutualPartnersCount,
-                singlePartnersCount
+                milestones: {
+                    total: totalMilestones,
+                    completed: completedMilestones,
+                    rate: totalMilestones ? Math.round((completedMilestones / totalMilestones) * 100) : 0,
+                },
+                recurringAdherence,
+                streak: {
+                    current: streakData.streakDays,
+                },
             },
             activityByDay,
             workspaces: workspaceStats,
-            partners: partnerStats
+            partners: partnerStats,
+            partnerInsights: {
+                monitoredTasksCount: monitoredTasks.length,
+                feedbackGivenCount,
+                pendingVerificationsCount: pendingVerificationsForMe,
+                pendingProgressRequestsCount: pendingRequestsForMe,
+            },
         });
     }
     catch (error) {
